@@ -1,0 +1,21 @@
+# Smart Clock — ESP32-S3 SDK configuration overrides
+#
+# Resets the GDMA channel at the start of every vertical blanking interval.
+# This prevents the Panel_RGB scan pointer from drifting when the CPU or other
+# DMA activity (Serial, I2C, WiFi) briefly starves the LCD_CAM engine, which
+# manifests as the image shifting left/right on screen.
+CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
+
+# Keep small heap allocations in internal SRAM instead of routing them to PSRAM.
+# The ESP32-S3 PSRAM bus is shared by LCD_CAM GDMA (continuous front-buffer reads)
+# and the CPU D-cache (back-buffer writes during flush).  When WiFi DMA, LwIP
+# packet buffers, or ArduinoJson heap documents also land in PSRAM all three
+# masters compete for the same bus, causing visible horizontal jitter.
+#
+# With this config, malloc() calls for ≤16 KB stay in the 512 KB internal SRAM
+# rather than PSRAM.  This covers:
+#   • WiFi / LwIP packet & socket buffers  (typically 1–8 KB each)
+#   • ArduinoJson DynamicJsonDocument       (4–8 KB in this project)
+#   • HTTPClient / response buffering       (variable, but small chunks)
+# Larger allocations (e.g. the two 375 KB LVGL framebuffers) still go to PSRAM.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
