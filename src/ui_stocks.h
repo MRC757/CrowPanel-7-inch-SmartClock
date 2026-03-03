@@ -13,9 +13,8 @@
 #include "config.h"
 #include "stock_api.h"
 
-static lv_obj_t* _stk_scr        = nullptr;
-static lv_obj_t* _stk_hdr_time   = nullptr;
-static time_t    _stk_last_fetch = 0;
+static lv_obj_t*     _stk_scr            = nullptr;
+static lv_obj_t*     _stk_hdr_time       = nullptr;
 
 // Card widgets (one per stock)
 struct StockCard {
@@ -145,19 +144,26 @@ inline lv_obj_t* ui_stocks_create() {
 inline void ui_stocks_update(const StocksData& sd) {
     if (!_stk_scr) return;
 
-    // Record fetch time and update header label when new valid data arrives
-    if (sd.valid) {
-        _stk_last_fetch = time(nullptr);
-    }
-    if (_stk_hdr_time && _stk_last_fetch > 0) {
+    // Timestamp + staleness: driven entirely by sd.fetch_time (set only when
+    // the API actually returns fresh data).  Navigation calls that pass the
+    // same cached sd never advance the clock, so stale data always looks stale.
+    if (_stk_hdr_time && sd.fetch_time > 0) {
         struct tm ti;
-        localtime_r(&_stk_last_fetch, &ti);
+        localtime_r(&sd.fetch_time, &ti);
         char ts[28];
         strftime(ts, sizeof(ts), "Updated %I:%M %p", &ti);
-        // Strip leading zero from hour ("Updated 02:34 PM" → "Updated 2:34 PM")
-        char* p = ts + 8;  // points to hour digit after "Updated "
+        // Strip leading zero ("Updated 02:34 PM" → "Updated 2:34 PM")
+        char* p = ts + 8;
         if (p[0] == '0') memmove(p, p + 1, strlen(p));
         lv_label_set_text(_stk_hdr_time, ts);
+
+        // Age in seconds since the actual API fetch
+        time_t age_sec = time(nullptr) - sd.fetch_time;
+        lv_color_t c;
+        if      (age_sec > 4L * STOCKS_UPDATE_MS / 1000) c = lv_color_hex(0xf44336);  // red   >20 min
+        else if (age_sec > 2L * STOCKS_UPDATE_MS / 1000) c = lv_color_hex(0xff9800);  // orange >10 min
+        else                                              c = lv_color_hex(0x9e9e9e);  // gray
+        lv_obj_set_style_text_color(_stk_hdr_time, c, 0);
     }
 
     if (!sd.valid) return;

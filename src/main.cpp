@@ -51,6 +51,8 @@
 #include "ui_alert.h"
 #include "nfl_api.h"
 #include "ui_nfl.h"
+#include "nba_api.h"
+#include "ui_nba.h"
 
 // GT911 touch controller (TAMC_GT911 via Wire; SDA=15, SCL=16, no IRQ/RST pins)
 static TAMC_GT911 ts(I2C_SDA_PIN, I2C_SCL_PIN, -1, -1, SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -65,6 +67,7 @@ NewsData    g_news    = {};
 IssData     g_iss     = {};
 AlertsData  g_alerts  = {};
 NflData     g_nfl     = {};
+NbaData     g_nba     = {};
 
 // Active LVGL screen objects
 static lv_obj_t* scr_setup    = nullptr;
@@ -74,6 +77,7 @@ static lv_obj_t* scr_stocks   = nullptr;
 static lv_obj_t* scr_forecast = nullptr;
 static lv_obj_t* scr_hourly   = nullptr;
 static lv_obj_t* scr_nfl      = nullptr;
+static lv_obj_t* scr_nba      = nullptr;
 
 // Timing
 static unsigned long last_weather_ms   = 0;
@@ -82,8 +86,10 @@ static unsigned long last_stocks_ms    = 0;
 static unsigned long last_ntp_ms       = 0;
 static unsigned long last_iss_ms       = 0;
 static unsigned long last_alerts_ms    = 0;
-static unsigned long last_nfl_ms       = 0;
-static unsigned long last_dim_check_ms = 0;  // auto-dim evaluation interval
+static unsigned long last_nfl_ms            = 0;
+static unsigned long last_nba_ms            = 0;
+static unsigned long last_dim_check_ms      = 0;  // auto-dim evaluation interval
+static unsigned long last_reconnect_ms      = 0;  // WiFi reconnect watchdog
 
 // Alert state — track a hash of active Extreme/Severe events so we only
 // buzz when the alert set genuinely changes (not on every 5-min re-fetch).
@@ -181,7 +187,7 @@ void navigateTo(int screenId) {
         case SCR_MAIN:   target = scr_main;   break;
         case SCR_NEWS:
             target = scr_news;
-            ui_news_tick();     // refresh timestamp before showing
+            ui_news_tick();          // refresh staleness color
             break;
         case SCR_STOCKS:
             target = scr_stocks;
@@ -198,6 +204,10 @@ void navigateTo(int screenId) {
         case SCR_NFL:
             target = scr_nfl;
             ui_nfl_tick();
+            break;
+        case SCR_NBA:
+            target = scr_nba;
+            ui_nba_tick();
             break;
         default: return;
     }
@@ -288,20 +298,21 @@ static void do_weather_fetch(bool force_geocode = false) {
 static void do_news_fetch() {
     if (!wifi_connected) return;
     Serial.println("[NEWS] Fetching news...");
-    if (fetchNews(g_news)) {
-        ui_main_update_news(g_news);
-        ui_news_update(g_news);
-    }
-    last_news_ms = millis();
+    fetchNews(g_news);
+    // Always update the UI so the list replaces the "Fetching..." placeholder;
+    // ui_news_update handles the nd.valid==false case gracefully.
+    ui_main_update_news(g_news);
+    ui_news_update(g_news);
+    // If fetch completely failed (timeout/SSL error), retry in 5 min instead of 30.
+    last_news_ms = g_news.valid ? millis() : millis() - NEWS_UPDATE_MS + 5UL * 60 * 1000;
 }
 
 static void do_stocks_fetch() {
     if (!wifi_connected) return;
     Serial.println("[STOCKS] Fetching stocks...");
-    if (fetchStocks(g_stocks)) {
-        ui_main_update_stocks(g_stocks);
-        ui_stocks_update(g_stocks);
-    }
+    fetchStocks(g_stocks);          // preserves last valid prices on failure
+    ui_main_update_stocks(g_stocks);
+    ui_stocks_update(g_stocks);     // always refresh cards + staleness color
     last_stocks_ms = millis();
 }
 
@@ -360,6 +371,15 @@ static void do_nfl_fetch() {
     last_nfl_ms = millis();
 }
 
+static void do_nba_fetch() {
+    if (!wifi_connected) return;
+    Serial.println("[NBA] Fetching NBA schedule...");
+    if (fetchNba(g_nba, g_prefs.utc_offset_sec)) {
+        ui_nba_update(g_nba);
+    }
+    last_nba_ms = millis();
+}
+
 // Performs the full first-load fetch sequence with LVGL yielding between calls.
 static void initial_fetch() {
     ui_setup_set_status("Fetching weather...", lv_color_hex(0x4fc3f7));
@@ -391,6 +411,11 @@ static void initial_fetch() {
     lv_timer_handler(); delay(20);
 
     do_nfl_fetch();
+
+    ui_setup_set_status("Fetching NBA schedule...", lv_color_hex(0x4fc3f7));
+    lv_timer_handler(); delay(20);
+
+    do_nba_fetch();
 
     first_fetch_done = true;
 }
@@ -582,6 +607,7 @@ void setup() {
     scr_forecast = ui_forecast_create();
     scr_hourly   = ui_hourly_create();
     scr_nfl      = ui_nfl_create();
+    scr_nba      = ui_nba_create();
     ui_alert_init();   // floating banner on lv_layer_top(), above all screens
     Serial.println("[UI] All screens created");
 
@@ -684,22 +710,36 @@ void loop() {
             do_nfl_fetch();
         }
 
+        // NBA schedule update (1 hour)
+        if (first_fetch_done && now - last_nba_ms >= NBA_UPDATE_MS) {
+            do_nba_fetch();
+        }
+
         // Auto-dim: re-evaluate day/night brightness every minute
         if (first_fetch_done && now - last_dim_check_ms >= 60000UL) {
             check_auto_dim();
         }
 
-    } else if (wifi_connected == false && first_fetch_done &&
-               millis() - last_stocks_ms >= 30000UL) {
-        // Periodically attempt WiFi reconnect (every 30 s after disconnect)
-        if (strlen(g_prefs.wifi_ssid) > 0) {
-            Serial.println("[WiFi] Attempting reconnect...");
-            wifi_connect(g_prefs.wifi_ssid, g_prefs.wifi_pass, 8000);
-            if (wifi_connected) {
-                ntp_sync();
-                do_stocks_fetch();   // refresh stale data immediately
-            }
-            last_stocks_ms = millis();  // reset timer to avoid hammering
+    } else if (!wifi_connected && first_fetch_done &&
+               strlen(g_prefs.wifi_ssid) > 0 &&
+               millis() - last_reconnect_ms >= 30000UL) {
+        // Reconnect watchdog: retry every 30 s after a disconnect.
+        // Uses a dedicated timer so no data-fetch timer is corrupted.
+        last_reconnect_ms = millis();
+        Serial.println("[WiFi] Attempting reconnect...");
+        wifi_connect(g_prefs.wifi_ssid, g_prefs.wifi_pass, 8000);
+        if (wifi_connected) {
+            unsigned long now = millis();
+            ntp_sync();
+            // Re-fetch any source whose data is stale (age >= its normal interval)
+            if (now - last_weather_ms >= WEATHER_UPDATE_MS) do_weather_fetch();
+            if (now - last_news_ms    >= NEWS_UPDATE_MS)    do_news_fetch();
+            if (now - last_stocks_ms  >= STOCKS_UPDATE_MS)  do_stocks_fetch();
+            if (now - last_alerts_ms  >= ALERTS_UPDATE_MS)  do_alerts_fetch();
+            if (now - last_nfl_ms     >= NFL_UPDATE_MS)     do_nfl_fetch();
+            if (now - last_nba_ms     >= NBA_UPDATE_MS)     do_nba_fetch();
+            // ISS is 6-hour; only refetch if genuinely stale
+            if (now - last_iss_ms     >= ISS_UPDATE_MS)     do_iss_fetch();
         }
     }
 

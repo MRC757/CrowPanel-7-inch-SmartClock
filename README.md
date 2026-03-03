@@ -1,6 +1,6 @@
 # Smart Clock
 
-A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI ESP32-S3** *(SKU: DIS02170A, V1.3)* (800×480 IPS touchscreen). Displays local time, weather, 5-day forecast, market data, live breaking news, ISS pass times, weather alerts, and NFL scores — with automatic night dimming and audible severe-weather alerts.
+A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI ESP32-S3** *(SKU: DIS02170A, V1.3)* (800×480 IPS touchscreen). Displays local time, weather, 5-day forecast, 3-day hourly charts, market data, live breaking news, ISS pass times, weather alerts, NFL scores, and NBA scores for the Lakers & Warriors — with automatic night dimming and audible severe-weather alerts.
 
 ![Smart Clock Layout](docs/layout.png)
 > *(screenshot placeholder — add your own after first boot)*
@@ -17,16 +17,18 @@ A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI 
 | **Sunrise & Sunset** | Today's rise/set times in the weather panel (from Open-Meteo, no extra request) |
 | **Moon Phase** | Current lunar phase calculated locally — no network request |
 | **5-Day Forecast** | Dedicated screen: daily high/low, condition, precipitation, UV index per day |
+| **3-Day Hourly Charts** | Scrollable temperature, wind speed, and precip-chance line charts across 72 hours; auto-scrolls so current time is always at the left edge; Midnight/Noon markers and Y-axis labels |
 | **UV Index** | Daily maximum UV index on every forecast card |
 | **ISS Pass Times** | Next 3 ISS visible passes scrolling at the bottom of the Forecast screen |
 | **Weather Alerts** | NWS active alerts (tornado, flood, severe storm) shown as a red banner across all screens |
 | **Alert Buzzer** | Piezo buzzer sounds 5 beeps for Extreme alerts, 3 beeps for Severe — only on new/changed alerts |
 | **Market Data** | S&P 500, DOW Jones, VYMI, VYM, Gold (GC=F), Silver (SI=F) — price, change, change % |
-| **News** | Webz.io News API Lite — up to 10 breaking headlines (weather, economy, science) |
+| **News** | Google News RSS — up to 12 top US breaking headlines, refreshed every 30 minutes; no API key required |
 | **NFL Schedule** | Next 7 days of NFL games: teams, kickoff time, live scores, final scores |
+| **NBA Schedule** | Next 7 days of LA Lakers & Golden State Warriors games: tip-off time, live quarter scores, final scores, postponements; team-color accent strip per row |
 | **Auto Night Dim** | Display automatically dims at sunset and brightens at sunrise; configurable brightness |
 | **Touch Setup** | On-screen keyboard for WiFi credentials and ZIP code; WiFi network scanner; brightness slider |
-| **Multi-screen** | Setup · Clock · News · Stocks · Forecast · NFL; tap nav bar to switch |
+| **Multi-screen** | Setup · Clock · News · Stocks · Daily Forecast · Hourly · NFL · NBA; tap nav bar to switch |
 | **Persistent settings** | WiFi + ZIP + night brightness stored in NVS flash; auto-reconnects on boot |
 
 ---
@@ -140,8 +142,8 @@ The **Night Brightness** slider (10–100%) sets how dim the display becomes bet
 │  Set:    5:52 PM     │                                       │
 │  Moon: Waxing Gibbous│                                       │
 ├──────────────────────┴───────────────────────────────────────┤
-│  ⚙ Setup  🏠 Clock  ≡ News  ≡ Stocks  ~ Forecast  ▶ NFL    │
-└──────────────────────────────────────────────────────────────┘
+│  ⚙ Setup  🏠 Clock  ≡ News  ≡ Stocks  ~ Daily  ↺ Hourly  ▶ NFL  ↻ NBA  │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 UTC time updates every second. Timezone is auto-detected from the ZIP code via Open-Meteo (DST-aware). Sunrise/sunset come from the same weather fetch. Moon phase is computed locally.
@@ -158,7 +160,7 @@ The buzzer only sounds when the active alert set changes — repeated 5-minute f
 ```
 
 ### News Screen
-Full scrollable list of up to 10 breaking headlines from the **Webz.io News API Lite**, filtered to English-language articles in the weather, economy, and science categories. Headlines are published within the past hour from top-ranked news sources.
+Full scrollable list of up to 12 breaking headlines from the **Google News RSS** feed (`https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en`). No API key required. Headlines are the current top US stories across all topics. Refreshed every 30 minutes.
 
 ### Stocks Screen
 3×2 card grid with detailed market info for each of the 6 symbols (S&P 500, DOW, VYMI, VYM, Gold, Silver), including absolute price change, percentage change, and market state (Open / Pre-market / After-hours / Closed).
@@ -186,6 +188,13 @@ Gold and Silver use Yahoo Finance COMEX front-month futures tickers (`GC=F`, `SI
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Hourly Forecast Screen
+72-hour (3-day) line chart view with three stacked charts: Temperature (°F), Wind Speed (mph), and Precip Chance (%). Each chart has:
+- Standalone Y-axis labels at fixed screen positions
+- Midnight (blue) and Noon (gold) vertical marker lines with "12A"/"12P" labels
+- Day-of-week labels aligned above each noon marker (correct regardless of time of day)
+- **Smooth auto-scroll** — within each hour the charts slide left so the current time is always at the left edge; snaps back on hourly data refresh
+
 ### NFL Screen
 Shows NFL games scheduled over the next 7 days, grouped by date. Scrollable when more games are listed than fit on screen.
 
@@ -193,24 +202,42 @@ Shows NFL games scheduled over the next 7 days, grouped by date. Scrollable when
 - **In-progress games** — live score shown in green
 - **Final games** — score + "Final" shown in grey
 
-> **Requires a free API key** — see [NFL API Key Setup](#api-key-setup) below.
+> **Requires a free API key** — see [API Key Setup](#api-key-setup) below.
+
+### NBA Screen
+Shows LA Lakers and Golden State Warriors games scheduled over the next 7 days, grouped by date. Scrollable.
+
+- **Upcoming games** — tip-off time shown in gold (local time)
+- **In-progress games** — live score + period shown in green (e.g. `98-87 3Q`)
+- **Final games** — score + "Final" shown in grey
+- **Postponed games** — "Postponed" shown in orange
+- **Team accent strip** — 4px left border: Lakers purple for LAL games, Warriors blue for GSW games, gold for Lakers vs. Warriors matchups
+
+> **Requires the same Ball Don't Lie API key as NFL** — see [API Key Setup](#api-key-setup) below.
 
 ---
 
 ## API Key Setup
 
-### NFL — Ball Don't Lie
+### News — Google News RSS
 
-The NFL screen uses the [Ball Don't Lie](https://www.balldontlie.io) API (free tier, no cost).
+The News screen fetches the [Google News RSS](https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en) feed. **No API key or account required.** The feed URL and locale are defined in `src/news_api.h` as `GOOGLE_NEWS_RSS`.
+
+### NFL & NBA — Ball Don't Lie
+
+Both the NFL and NBA screens use the [Ball Don't Lie](https://www.balldontlie.io) API (free tier, no cost) with the **same single API key**.
+
+- **NFL endpoint:** `GET https://api.balldontlie.io/nfl/v1/games` — filtered by date (next 7 days)
+- **NBA endpoint:** `GET https://api.balldontlie.io/v1/games` — filtered by `team_ids[]=14` (Lakers) and `team_ids[]=10` (Warriors), plus `start_date`/`end_date`
 
 1. Register at [balldontlie.io](https://www.balldontlie.io) and copy your API key
-2. Open `include/config.h` and locate the NFL base URL section — add your key to `nfl_api.h`'s HTTP header, or store it in `include/secrets.h`:
+2. Paste it into `include/secrets.h`:
    ```cpp
    #define BALLDONTLIE_API_KEY  "your_key_here"
    ```
 3. Re-build and flash the firmware
 
-Without a key the NFL screen displays a setup reminder instead of game data.
+Without a key both the NFL and NBA screens display a setup reminder instead of game data.
 
 ### ISS Pass Times — N2YO
 
@@ -246,7 +273,7 @@ The display automatically dims at sunset and returns to full brightness at sunri
 
 ## Hardware RTC (BM8563)
 
-The CrowPanel Advance 7" V1.3 includes a **BM8563** real-time clock (PCF8563-compatible) at I2C address `0x51` with battery backup. This keeps accurate time across full power cycles — no NVS epoch workaround needed.
+The CrowPanel Advance 7.0 (SKU: DIS02170A, V1.3) includes a **BM8563** real-time clock (PCF8563-compatible) at I2C address `0x51` with battery backup. This keeps accurate time across full power cycles — no NVS epoch workaround needed.
 
 **How it works:**
 - **On boot:** `rtc_restore_system_time()` reads local time from the BM8563, converts it to a UTC epoch (subtracting the saved UTC offset), and calls `settimeofday()`. The clock displays the correct time immediately.
@@ -274,7 +301,7 @@ The CrowPanel 7" uses an ESP32-S3 RGB parallel panel (`Panel_RGB`). Getting stab
 | `LV_COLOR_16_SWAP 1` | `lv_conf.h` | LVGL pre-swaps pixel bytes so `pushImageDMA` raw-copies to the Panel_RGB framebuffer in the correct byte order the LCD_CAM expects |
 | LVGL render buffers in SRAM | `main.cpp` | Two 20-line (32 KB) SRAM buffers keep CPU compositing off the PSRAM bus; only the final `pushImageDMA` touches PSRAM |
 | Per-scanline `startWrite/endWrite` in flush | `main.cpp disp_flush()` | ESP32-S3 D-cache = 32 KB = exact size of one LVGL flush strip. Without `endWrite()` the D-cache is never flushed to PSRAM and the vsync double-buffer swap never fires. Per-row pairs limit each PSRAM writeback burst to ~1.6 KB (25 cache lines) and keep `display()` flip flag set each row (boolean — idempotent). See full history in [Display Jitter Troubleshooting](#display-jitter-troubleshooting) |
-| `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384` | `sdkconfig.defaults` | `malloc()` calls ≤16 KB go to internal SRAM; keeps WiFi/LwIP packet buffers and ArduinoJson documents off the PSRAM bus during downloads |
+| `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=8192` | `sdkconfig.defaults` | `malloc()` calls ≤8 KB go to internal SRAM; keeps WiFi/LwIP packet buffers off the PSRAM bus. Threshold is 8 KB (not 16 KB) so mbedTLS 16 KB SSL record buffers go to PSRAM, preventing SRAM exhaustion after multiple sequential SSL connections |
 | `static StaticJsonDocument<N>` in API files | all `*_api.h` | JSON parse documents allocated in BSS (internal SRAM) — no heap, no PSRAM bus traffic during JSON parsing |
 | `LV_THEME_DEFAULT_TRANSITION_TIME 0` | `lv_conf.h` | Disables LVGL press/focus animations that generate continuous flush calls |
 | `LV_THEME_DEFAULT_GROW 0` | `lv_conf.h` | Disables grow-on-press effect for the same reason |
@@ -288,7 +315,7 @@ Horizontal jitter on this board has three distinct sources, each requiring a sep
 | Source | Symptom | Fix |
 |---|---|---|
 | **D-cache burst on flush** | Jitter on every button/keyboard press | Per-scanline `startWrite/endWrite` in `disp_flush()` — limits each PSRAM burst to ~1.6 KB |
-| **WiFi/LwIP DMA during connect & downloads** | Jitter on startup and while fetching data | `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384` in `sdkconfig.defaults` — keeps network buffers in internal SRAM |
+| **WiFi/LwIP DMA during connect & downloads** | Jitter on startup and while fetching data | `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=8192` in `sdkconfig.defaults` — keeps network buffers in internal SRAM |
 | **ArduinoJson heap in PSRAM** | Jitter while parsing JSON responses | `static StaticJsonDocument<N>` in all `*_api.h` files — BSS segment = internal SRAM |
 
 ### Approaches that did NOT work
@@ -303,18 +330,15 @@ Horizontal jitter on this board has three distinct sources, each requiring a sep
 
 ---
 
-## News API (Webz.io)
+## News (Google News RSS)
 
-The News screen uses the [Webz.io News API Lite](https://docs.webz.io/reference/news-api-lite) (free, 1 000 requests/month, 10 articles/call).
+The News screen fetches `https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en` — a standard RSS 2.0 feed with no authentication, no rate limit, and no account required.
 
-**Query:** `language:english AND (category:weather OR category:economy OR category:science) AND breaking:true`
+**Parsing:** The firmware uses a streaming XML state machine (`src/news_api.h`) that reads `<item><title>…</title></item>` blocks directly from the HTTP stream without buffering the full response body. Up to 12 headlines are stored.
 
-**Limitations discovered:**
-- The Lite plan returns HTTP 500 for queries with **4 or more OR conditions** in a single category group. Maximum 3 categories can be combined.
-- The `size` parameter is ignored — the plan always returns exactly 10 results.
-- Valid IPTC category values: `economy` `disaster` `science` `war` `weather` `politics` `health` `crime`
+**Character handling:** Google News sends raw UTF-8 multi-byte sequences for smart quotes (`'` `"`) and dashes (`–` `—`). The `_utf8ToAscii()` pass converts these to their printable ASCII equivalents before the `_decodeEntities()` pass handles any remaining `&amp;`-style XML entities, ensuring clean display on the ASCII font.
 
-To change categories, edit `WEBZ_NEWS_URL` in `include/config.h`.
+**To change the locale/region:** edit `GOOGLE_NEWS_RSS` in `src/news_api.h`. Google News RSS supports `hl=` (language), `gl=` (country), and `ceid=` parameters.
 
 ---
 
@@ -326,11 +350,12 @@ To change categories, edit `WEBZ_NEWS_URL` in `include/config.h`.
 | ZIP → coordinates | [api.zippopotam.us](https://api.zippopotam.us) | No | US ZIP codes only |
 | Weather, forecast, UV, sunrise/sunset | [Open-Meteo](https://open-meteo.com) | No | Single request returns all current + daily data |
 | Moon phase | Calculated locally | — | Synodic period formula; no network required |
-| News | [Webz.io News API Lite](https://docs.webz.io/reference/news-api-lite) | **Free key** | JSON; breaking:true; English; weather/economy/science categories |
+| News | [Google News RSS](https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en) | No | RSS 2.0 XML; top US breaking headlines; no rate limit |
 | Stocks | Yahoo Finance chart API (v8, per-symbol) | No | 6 sequential HTTPS requests; `chartPreviousClose` used for index/futures % change |
 | ISS pass times | [N2YO](https://www.n2yo.com) visual passes API | **Free key** | HTTPS; NORAD ID 25544 (ISS) |
 | Weather alerts | [NWS API](https://api.weather.gov/alerts/active) | No | HTTPS, US only; uses lat/lon from geocode |
-| NFL schedule & scores | [Ball Don't Lie](https://www.balldontlie.io) | **Free key** | HTTPS |
+| NFL schedule & scores | [Ball Don't Lie](https://www.balldontlie.io) | **Free key** | HTTPS; `/nfl/v1/games` filtered by date |
+| NBA schedule & scores (Lakers + Warriors) | [Ball Don't Lie](https://www.balldontlie.io) | **Same key as NFL** | HTTPS; `/v1/games` filtered by `team_ids[]=14,10` + date range |
 
 ### Update Intervals
 
@@ -345,6 +370,7 @@ To change categories, edit `WEBZ_NEWS_URL` in `include/config.h`.
 | BM8563 RTC updated | After each NTP sync (every 1 hour) |
 | ISS pass times | Every 6 hours |
 | NFL schedule | Every 1 hour |
+| NBA schedule (Lakers & Warriors) | Every 1 hour |
 | NTP re-sync | Every 1 hour |
 
 ---
@@ -377,10 +403,9 @@ Built-in ESP32 Arduino libraries used: `WiFi`, `WiFiClientSecure`, `HTTPClient`,
 git clone https://github.com/YOUR_USERNAME/smart-clock.git
 cd smart-clock/SmartClockProject
 
-# Add your API keys (file is gitignored — safe to edit locally)
-# Edit include/config.h or create include/secrets.h:
-#   BALLDONTLIE_API_KEY  — Ball Don't Lie NFL API (balldontlie.io)
-#   N2YO_API_KEY         — ISS pass predictions  (n2yo.com)
+# Add your API keys to include/secrets.h:
+#   BALLDONTLIE_API_KEY  — Ball Don't Lie NFL/NBA API (balldontlie.io)
+#   N2YO_API_KEY         — ISS pass predictions       (n2yo.com)
 
 # Full clean build (required on first build or after sdkconfig.defaults changes)
 pio run --target clean
@@ -416,7 +441,7 @@ Tap **⚙ Setup** in the navigation bar at any time.
 ```
 SmartClockProject/
 ├── platformio.ini           # PlatformIO build config (ESP32-S3, OPI PSRAM, 8 MB flash)
-├── sdkconfig.defaults       # ESP-IDF overrides
+├── sdkconfig.defaults       # ESP-IDF overrides: LCD_RGB_RESTART_IN_VSYNC, SPIRAM_MALLOC_ALWAYSINTERNAL=8192
 ├── LICENSE
 ├── README.md
 ├── .gitignore
@@ -441,16 +466,19 @@ SmartClockProject/
     ├── moon.h               # Moon phase calculation (local, no network)
     ├── iss_api.h            # ISS visible pass times via N2YO API
     ├── alerts_api.h         # NWS active weather alerts
-    ├── news_api.h           # Webz.io News API Lite fetch & JSON parser (breaking news)
+    ├── news_api.h           # Google News RSS fetch & XML streaming parser (top US headlines)
     ├── stock_api.h          # Yahoo Finance chart API — one HTTPS request per symbol
     ├── nfl_api.h            # Ball Don't Lie NFL games fetch & parser
+    ├── nba_api.h            # Ball Don't Lie NBA games fetch & parser (Lakers + Warriors)
     ├── ui_setup.h           # Setup screen: keyboard, WiFi scan popup, brightness slider
     ├── ui_main.h            # Main clock screen (weather + 6-stock market panel + UTC)
     │                        #   also defines _create_nav_bar() shared by all screens
     ├── ui_news.h            # Full news list screen
     ├── ui_stocks.h          # Detailed stock cards screen (3×2 grid: S&P, DOW, VYMI, VYM, Gold, Silver)
     ├── ui_forecast.h        # 5-day forecast screen (cards + UV + ISS strip)
+    ├── ui_hourly.h          # 3-day hourly charts (temp, wind, precip) with auto-scroll
     ├── ui_nfl.h             # NFL schedule screen (scrollable game list, 7-day window)
+    ├── ui_nba.h             # NBA schedule screen — Lakers & Warriors, 7-day window
     └── ui_alert.h           # Alert banner on lv_layer_top() (appears above all screens)
 ```
 
@@ -477,12 +505,12 @@ static const char* STOCK_DISPLAY_NAMES[STOCK_COUNT] = {
 #define ALERTS_UPDATE_MS    ( 5UL * 60 * 1000)       //  5 minutes
 #define ISS_UPDATE_MS       ( 6UL * 60 * 60 * 1000)  //  6 hours
 #define NFL_UPDATE_MS       (60UL * 60 * 1000)       //  1 hour
+#define NBA_UPDATE_MS       (60UL * 60 * 1000)       //  1 hour
 #define NTP_SYNC_MS         (60UL * 60 * 1000)       //  1 hour
 
-// Change news categories (max 3 OR conditions — Lite plan limit)
-// Valid IPTC values: economy, disaster, science, war, weather, politics, health, crime
-#define WEBZ_NEWS_URL  "https://api.webz.io/newsApiLite?token=" WEBZ_API_KEY \
-    "&q=language%3Aenglish%20AND%20..." // see config.h for full URL
+// News feed locale (in news_api.h)
+// Change hl= (language), gl= (country), ceid= to target a different region
+#define GOOGLE_NEWS_RSS  "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"
 ```
 
 ---
@@ -495,7 +523,7 @@ static const char* STOCK_DISPLAY_NAMES[STOCK_COUNT] = {
 | Image shifts left/right | Pixel clock or vsync timing wrong | Verify `freq_write = 16000000`; hsync 40/48/40; vsync 8/4/8 in `LGFX_Driver.h` |
 | Horizontal shift artifact | Incorrect flush pattern | Verify `disp_flush()` uses per-scanline `startWrite/endWrite` — see [Display Stability Notes](#display-stability-notes) |
 | Screen jitters on touch/button | D-cache burst to PSRAM | Confirm per-scanline `startWrite/endWrite` in `disp_flush()`; no persistent `gfx.startWrite()` in `setup()` |
-| Screen jitters on startup or download | WiFi/JSON PSRAM contention | Confirm `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384` in `sdkconfig.defaults` and `static StaticJsonDocument` in all `*_api.h` |
+| Screen jitters on startup or download | WiFi/JSON PSRAM contention | Confirm `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=8192` in `sdkconfig.defaults` and `static StaticJsonDocument` in all `*_api.h` |
 | Screen flickers on touch | LVGL theme animations enabled | Confirm `LV_THEME_DEFAULT_TRANSITION_TIME 0` and `LV_THEME_DEFAULT_GROW 0` in `lv_conf.h` |
 | Wrong colors at night brightness | LV_COLOR_16_SWAP not accounted for | Pixel scaler must call `__builtin_bswap16()` before/after channel extraction — see `backlight.h` |
 | No buzzer beep on boot | STC8H not responding | Verify I2C bus initialized before `buzzer_on()`; check serial for I2C errors |
@@ -514,6 +542,9 @@ static const char* STOCK_DISPLAY_NAMES[STOCK_COUNT] = {
 | ISS strip shows reminder | N2YO API key not set | Add key and re-flash |
 | NFL shows setup reminder | BDL API key not set | Add key and re-flash |
 | NFL game times wrong | Timezone mismatch | Weather fetch must complete first to set UTC offset |
+| NBA shows setup reminder | BDL API key not set | Same key used for both NFL and NBA; add key and re-flash |
+| NBA shows no games | Off-season or no upcoming games | NBA regular season runs Oct–Jun; returns empty list in off-season |
+| NBA game times wrong | Timezone mismatch | Same as NFL — weather fetch sets UTC offset |
 | SRAM alloc failed on boot | Insufficient free internal SRAM | Check serial; `[LVGL] SRAM allocation failed` |
 | WiFi scan finds no networks | Mode conflict | `on_scan_networks()` sets `WIFI_STA` before scan; ensure no concurrent mode change |
 
@@ -534,6 +565,7 @@ Enable verbose serial output by opening a monitor at **115200 baud** (`pio devic
 | `[NEWS]` | News fetch |
 | `[ISS]` | ISS pass time fetch |
 | `[NFL]` | NFL schedule fetch |
+| `[NBA]` | NBA schedule fetch |
 | `[LVGL]` | LVGL init errors |
 
 ---
@@ -547,10 +579,13 @@ Enable verbose serial output by opening a monitor at **115200 baud** (`pio devic
 - **No SSL certificate pinning** — HTTPS connections use `setInsecure()`. Appropriate for a hobby device displaying public data.
 - **Moon phase accuracy** — Accurate to ±1 day; sufficient for display purposes.
 - **NFL during off-season** — BDL returns zero games roughly March–August.
+- **NBA during off-season** — BDL returns zero games roughly July–September. The screen shows "No Lakers or Warriors games scheduled" gracefully.
+- **NBA team filter** — The screen shows all Lakers (ID 14) and Warriors (ID 10) games, including games against other opponents. A Lakers vs. Warriors matchup appears as a single row with a gold accent strip.
 - **WiFi scan blocks UI** — `WiFi.scanNetworks()` is synchronous (~2 seconds). Acceptable for one-time setup.
 - **Stock fetches block UI briefly** — 6 separate HTTPS requests (~2–3 s each, up to ~18 s total). Occurs only every 5 minutes.
 - **RTC battery** — The BM8563's backup battery maintains time when the board is unpowered. If the battery is depleted, the VL flag is set and the driver falls back to NTP sync on next WiFi connection.
-- **Panel_RGB DMA sensitivity** — Addressed with double PSRAM framebuffer, 400 kHz I2C, correct 40/48/40 horizontal blanking, and LVGL SRAM render buffers. See [Display Stability Notes](#display-stability-notes).
+- **Panel_RGB DMA / jitter** — Three root causes fully diagnosed and fixed: D-cache burst (per-scanline flush), WiFi/LwIP PSRAM contention (`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL`), and ArduinoJson heap in PSRAM (`static StaticJsonDocument`). See [Display Jitter Troubleshooting](#display-jitter-troubleshooting).
+- **Google News RSS locale** — The feed is fixed to `en-US`. To target a different country or language, change the `hl=`, `gl=`, and `ceid=` parameters in `GOOGLE_NEWS_RSS` in `src/news_api.h`.
 
 ---
 
