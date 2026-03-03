@@ -72,8 +72,9 @@ static void _create_nav_bar(lv_obj_t* scr, int active_screen) {
         { LV_SYMBOL_TINT     " Daily",   SCR_FORECAST },
         { LV_SYMBOL_REFRESH  " Hourly",  SCR_HOURLY   },
         { LV_SYMBOL_PLAY     " NFL",     SCR_NFL      },
+        { LV_SYMBOL_LOOP     " NBA",     SCR_NBA      },
     };
-    int n = 7;
+    int n = 8;
     int btn_w = SCREEN_WIDTH / n;
 
     for (int i = 0; i < n; i++) {

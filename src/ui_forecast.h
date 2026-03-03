@@ -16,16 +16,18 @@
 #include "config.h"
 #include "weather_api.h"
 #include "iss_api.h"
+#include "weather_icons.h"
 
-static lv_obj_t* _fcast_scr      = nullptr;
-static lv_obj_t* _fcast_hdr_time = nullptr;
-static lv_obj_t* _fcast_iss_lbl  = nullptr;
+static lv_obj_t*     _fcast_scr            = nullptr;
+static lv_obj_t*     _fcast_hdr_time       = nullptr;
+static lv_obj_t*     _fcast_iss_lbl        = nullptr;
+static unsigned long _fcast_last_update_ms = 0;   // millis() at last successful fetch
 
 struct ForecastCard {
     lv_obj_t* card;
     lv_obj_t* lbl_day;
     lv_obj_t* lbl_today;
-    lv_obj_t* lbl_desc;
+    lv_obj_t* icon_cont;   // 50×50 transparent container — holds weather icon widgets
     lv_obj_t* lbl_high;
     lv_obj_t* lbl_low;
     lv_obj_t* lbl_precip;
@@ -78,14 +80,15 @@ static ForecastCard _make_fcast_card(lv_obj_t* parent, int x, int idx) {
     lv_obj_set_style_bg_color(div, lv_color_hex(0x333355), 0);
     lv_obj_set_style_border_width(div, 0, 0);
 
-    // Condition
-    c.lbl_desc = lv_label_create(c.card);
-    lv_label_set_text(c.lbl_desc, "---");
-    lv_obj_set_style_text_font(c.lbl_desc, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(c.lbl_desc, lv_color_hex(0x4fc3f7), 0);
-    lv_obj_set_width(c.lbl_desc, _FC_W - 20);
-    lv_label_set_long_mode(c.lbl_desc, LV_LABEL_LONG_WRAP);
-    lv_obj_align(c.lbl_desc, LV_ALIGN_TOP_MID, 0, 56);
+    // Weather icon — 50×50 transparent container; children drawn by weather_icon_draw()
+    c.icon_cont = lv_obj_create(c.card);
+    lv_obj_set_size(c.icon_cont, 50, 50);
+    lv_obj_set_style_bg_opa(c.icon_cont, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(c.icon_cont, 0, 0);
+    lv_obj_set_style_pad_all(c.icon_cont, 0, 0);
+    lv_obj_set_style_shadow_width(c.icon_cont, 0, 0);
+    lv_obj_clear_flag(c.icon_cont, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_align(c.icon_cont, LV_ALIGN_TOP_MID, 0, 52);
 
     // "HI" tag
     lv_obj_t* hi_tag = lv_label_create(c.card);
@@ -235,7 +238,7 @@ inline void ui_forecast_update(const WeatherData& wd) {
         ForecastCard& c = _fcast_cards[i];
         if (i >= wd.forecast_count) {
             lv_label_set_text(c.lbl_day,    "N/A");
-            lv_label_set_text(c.lbl_desc,   "");
+            lv_obj_clean(c.icon_cont);
             lv_label_set_text(c.lbl_high,   "--°");
             lv_label_set_text(c.lbl_low,    "--°");
             lv_label_set_text(c.lbl_precip, "N/A");
@@ -246,8 +249,9 @@ inline void ui_forecast_update(const WeatherData& wd) {
         const DailyForecast& f = wd.forecast[i];
         char buf[24];
 
-        lv_label_set_text(c.lbl_day,  f.day_name);
-        lv_label_set_text(c.lbl_desc, wmo_desc_short(f.weather_code));
+        lv_label_set_text(c.lbl_day, f.day_name);
+        lv_obj_clean(c.icon_cont);
+        weather_icon_draw(c.icon_cont, f.weather_code);
 
         snprintf(buf, sizeof(buf), "%.0f\xB0""F", f.temp_max_f);
         lv_label_set_text(c.lbl_high, buf);
@@ -263,6 +267,7 @@ inline void ui_forecast_update(const WeatherData& wd) {
     }
 
     if (_fcast_hdr_time) {
+        _fcast_last_update_ms = millis();
         struct tm ti;
         if (getLocalTime(&ti, 100)) {
             char ts[20];
@@ -271,6 +276,7 @@ inline void ui_forecast_update(const WeatherData& wd) {
             if (p[0] == '0') memmove(p, p + 1, strlen(p));
             lv_label_set_text(_fcast_hdr_time, ts);
         }
+        lv_obj_set_style_text_color(_fcast_hdr_time, lv_color_hex(0x9e9e9e), 0);
     }
 }
 
@@ -300,13 +306,13 @@ inline void ui_forecast_update_iss(const IssData& id) {
     lv_label_set_text(_fcast_iss_lbl, text.c_str());
 }
 
-// ─── Refresh header timestamp ─────────────────────────────────────────────────
+// ─── Refresh staleness color on navigation ────────────────────────────────────
 inline void ui_forecast_tick() {
-    if (!_fcast_hdr_time) return;
-    struct tm ti;
-    if (getLocalTime(&ti, 100)) {
-        char ts[20];
-        strftime(ts, sizeof(ts), "%I:%M %p", &ti);
-        lv_label_set_text(_fcast_hdr_time, ts);
-    }
+    if (!_fcast_hdr_time || _fcast_last_update_ms == 0) return;
+    unsigned long age = millis() - _fcast_last_update_ms;
+    lv_color_t c;
+    if      (age > 4UL * WEATHER_UPDATE_MS) c = lv_color_hex(0xf44336);  // red  — very stale
+    else if (age > 2UL * WEATHER_UPDATE_MS) c = lv_color_hex(0xff9800);  // orange — overdue
+    else                                    c = lv_color_hex(0x9e9e9e);   // gray — fresh
+    lv_obj_set_style_text_color(_fcast_hdr_time, c, 0);
 }

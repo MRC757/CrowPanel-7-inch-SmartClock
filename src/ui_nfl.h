@@ -25,9 +25,10 @@
 #include "nfl_api.h"
 
 // ─── Widget handles ────────────────────────────────────────────────────────
-static lv_obj_t* _nfl_scr         = nullptr;
-static lv_obj_t* _nfl_list_panel  = nullptr;   // scrollable content area
-static lv_obj_t* _nfl_updated_lbl = nullptr;   // "Updated HH:MM AM" in header
+static lv_obj_t*     _nfl_scr            = nullptr;
+static lv_obj_t*     _nfl_list_panel     = nullptr;   // scrollable content area
+static lv_obj_t*     _nfl_updated_lbl    = nullptr;   // "Updated HH:MM AM" in header
+static unsigned long _nfl_last_update_ms = 0;         // millis() at last successful fetch
 
 // ─── Row geometry ──────────────────────────────────────────────────────────
 #define NFL_DATE_ROW_H  28    // date separator row
@@ -60,7 +61,7 @@ inline lv_obj_t* ui_nfl_create() {
     lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t* title = lv_label_create(hdr);
-    lv_label_set_text(title, "NFL \xe2\x80\x94 Next 7 Days");
+    lv_label_set_text(title, "NFL Next 7 Days");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(NFL_CLR_ACCENT), 0);
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 12, 0);
@@ -103,17 +104,16 @@ inline lv_obj_t* ui_nfl_create() {
 inline void ui_nfl_update(const NflData& nd) {
     if (!_nfl_list_panel) return;
 
-    // Update "Updated HH:MM" timestamp in header
+    // Record fetch time and update header timestamp
+    _nfl_last_update_ms = millis();
     if (_nfl_updated_lbl) {
         struct tm ti;
         if (getLocalTime(&ti, 100)) {
             char ts[20];
             strftime(ts, sizeof(ts), "Updated %I:%M %p", &ti);
-            // Remove leading zero from hour
-            const char* tp = (ts[8] == '0') ? ts + 1 : ts;   // "Updated 0X" → skip "Updated " +8 chars
-            // Simpler: just use the full string; leading zero is fine in timestamps
             lv_label_set_text(_nfl_updated_lbl, ts);
         }
+        lv_obj_set_style_text_color(_nfl_updated_lbl, lv_color_hex(NFL_CLR_SUBTEXT), 0);
     }
 
     // Clear all existing children (removes placeholder too)
@@ -226,13 +226,14 @@ inline void ui_nfl_update(const NflData& nd) {
     lv_obj_scroll_to_y(_nfl_list_panel, 0, LV_ANIM_OFF);
 }
 
-// ─── Called when navigating to the NFL screen (refreshes timestamp) ────────
+// ─── Called when navigating to the NFL screen (refreshes staleness color) ──
 inline void ui_nfl_tick() {
-    if (!_nfl_updated_lbl) return;
-    struct tm ti;
-    if (getLocalTime(&ti, 100)) {
-        char ts[20];
-        strftime(ts, sizeof(ts), "Updated %I:%M %p", &ti);
-        lv_label_set_text(_nfl_updated_lbl, ts);
-    }
+    if (!_nfl_updated_lbl || _nfl_last_update_ms == 0) return;
+    // Color the header label based on data age vs normal update interval
+    unsigned long age = millis() - _nfl_last_update_ms;
+    lv_color_t c;
+    if      (age > 4UL * NFL_UPDATE_MS) c = lv_color_hex(0xf44336);  // red  — very stale
+    else if (age > 2UL * NFL_UPDATE_MS) c = lv_color_hex(0xff9800);  // orange — overdue
+    else                                c = lv_color_hex(NFL_CLR_SUBTEXT);  // gray — fresh
+    lv_obj_set_style_text_color(_nfl_updated_lbl, c, 0);
 }

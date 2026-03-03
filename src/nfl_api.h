@@ -90,6 +90,8 @@ static bool fetchNfl(NflData& nd, int utc_offset_sec) {
     }
 
     // ── HTTP request ───────────────────────────────────────────────────────
+    Serial.printf("[NFL] URL: %s\n", url.c_str());
+
     WiFiClientSecure client;
     client.setInsecure();   // public API; no cert pinning needed
 
@@ -99,14 +101,22 @@ static bool fetchNfl(NflData& nd, int utc_offset_sec) {
     http.addHeader("Authorization", BALLDONTLIE_API_KEY);
 
     int code = http.GET();
+    Serial.printf("[NFL] HTTP %d  size=%d\n", code, http.getSize());
     if (code != 200) {
-        Serial.printf("[NFL] HTTP %d\n", code);
         http.end();
         return false;
     }
 
+    String body = http.getString();
+    http.end();
+#if SMART_CLOCK_DEBUG
+    Serial.printf("[NFL] body (first 300): %.300s\n", body.c_str());
+#endif
+
     // ── Parse JSON (filtered to keep only needed fields) ───────────────────
-    StaticJsonDocument<256> filter;
+    // 512 bytes — sized generously; undersizing silently corrupts the filter
+    // and causes ArduinoJson to discard all data.
+    StaticJsonDocument<512> filter;
     filter["data"][0]["date"]                         = true;
     filter["data"][0]["status"]                       = true;
     filter["data"][0]["visitor_team"]["abbreviation"] = true;
@@ -116,20 +126,21 @@ static bool fetchNfl(NflData& nd, int utc_offset_sec) {
 
     // static → BSS segment (internal SRAM), not heap/PSRAM.
     static StaticJsonDocument<6144> doc; doc.clear();
-    DeserializationError err = deserializeJson(doc, http.getStream(),
+    DeserializationError err = deserializeJson(doc, body,
                                                DeserializationOption::Filter(filter));
-    http.end();
-
     if (err) {
         Serial.printf("[NFL] JSON err: %s\n", err.c_str());
         return false;
     }
+    Serial.printf("[NFL] JSON ok, doc.mem=%d\n", (int)doc.memoryUsage());
 
     JsonArray data = doc["data"];
     if (data.isNull()) {
+        Serial.println("[NFL] 'data' key missing from response");
         nd.valid = true;   // no games; valid empty result
         return true;
     }
+    Serial.printf("[NFL] data.size()=%d\n", (int)data.size());
 
     for (JsonObject game : data) {
         if (nd.count >= NFL_MAX_GAMES) break;

@@ -2,7 +2,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // ui_news.h — Full-screen news headlines view
 //
-// Shows breaking news headlines from Webz.io News API Lite.
+// Shows top US headlines from Google News RSS feed.
 // Layout (800 x 480):
 //   Header bar (title + timestamp)  h=50
 //   Scrollable list of headlines     h=400
@@ -14,9 +14,10 @@
 #include "config.h"
 #include "news_api.h"
 
-static lv_obj_t* _news_scr      = nullptr;
-static lv_obj_t* _news_list     = nullptr;
-static lv_obj_t* _news_hdr_time = nullptr;
+static lv_obj_t*     _news_scr            = nullptr;
+static lv_obj_t*     _news_list           = nullptr;
+static lv_obj_t*     _news_hdr_time       = nullptr;
+static unsigned long _news_last_update_ms = 0;     // millis() at last successful fetch
 
 inline lv_obj_t* ui_news_create() {
     lv_obj_t* scr = lv_obj_create(nullptr);
@@ -69,47 +70,49 @@ inline lv_obj_t* ui_news_create() {
 inline void ui_news_update(const NewsData& nd) {
     if (!_news_list) return;
 
-    // Update timestamp in header
-    if (_news_hdr_time) {
-        struct tm ti;
-        if (getLocalTime(&ti, 100)) {
-            char ts[20];
-            strftime(ts, sizeof(ts), "%I:%M %p", &ti);
-            lv_label_set_text(_news_hdr_time, ts);
+    if (nd.valid && nd.count > 0) {
+        // Fresh valid data — update timestamp and repopulate list.
+        _news_last_update_ms = millis();
+        if (_news_hdr_time) {
+            struct tm ti;
+            if (getLocalTime(&ti, 100)) {
+                char ts[20];
+                strftime(ts, sizeof(ts), "%I:%M %p", &ti);
+                lv_label_set_text(_news_hdr_time, ts);
+            }
+            lv_obj_set_style_text_color(_news_hdr_time, lv_color_hex(0x9e9e9e), 0);
         }
-    }
-
-    if (!nd.valid || nd.count == 0) return;
-
-    // Clear existing items and repopulate
-    lv_obj_clean(_news_list);
-
-    for (int i = 0; i < nd.count; i++) {
-        // lv_list_add_btn creates a pressable item; we style it as plain text
-        lv_obj_t* btn = lv_list_add_btn(_news_list, LV_SYMBOL_RIGHT, nd.headlines[i]);
-        lv_obj_set_style_text_font(btn, &lv_font_montserrat_16, 0);
-        lv_obj_set_style_text_color(btn, lv_color_hex(0xe0e0e0), LV_PART_MAIN);
-        lv_obj_set_style_bg_color(btn,
-            (i % 2 == 0) ? lv_color_hex(0x16213e) : lv_color_hex(0x1a1a2e),
-            LV_PART_MAIN);
-        lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN);
-        lv_obj_set_height(btn, LV_SIZE_CONTENT);
-        // Allow multi-line wrapping
-        lv_obj_t* lbl = lv_obj_get_child(btn, -1);
-        if (lbl) {
-            lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
-            lv_obj_set_width(lbl, SCREEN_WIDTH - 60);
+        lv_obj_clean(_news_list);
+        for (int i = 0; i < nd.count; i++) {
+            lv_obj_t* btn = lv_list_add_btn(_news_list, LV_SYMBOL_RIGHT, nd.headlines[i]);
+            lv_obj_set_style_text_font(btn, &lv_font_montserrat_16, 0);
+            lv_obj_set_style_text_color(btn, lv_color_hex(0xe0e0e0), LV_PART_MAIN);
+            lv_obj_set_style_bg_color(btn,
+                (i % 2 == 0) ? lv_color_hex(0x16213e) : lv_color_hex(0x1a1a2e),
+                LV_PART_MAIN);
+            lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN);
+            lv_obj_set_height(btn, LV_SIZE_CONTENT);
+            lv_obj_t* lbl = lv_obj_get_child(btn, -1);
+            if (lbl) {
+                lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
+                lv_obj_set_width(lbl, SCREEN_WIDTH - 60);
+            }
         }
+    } else if (_news_last_update_ms == 0) {
+        // No successful fetch yet — replace the "Fetching..." placeholder.
+        lv_obj_clean(_news_list);
+        lv_list_add_text(_news_list, "No headlines available — check back soon.");
     }
+    // else: fetch failed but we already have headlines displayed — keep them.
 }
 
-// ─── Refresh timestamp without reloading headlines ────────────────────────
+// ─── Refresh staleness color on navigation ────────────────────────────────
 inline void ui_news_tick() {
-    if (!_news_hdr_time) return;
-    struct tm ti;
-    if (getLocalTime(&ti, 100)) {
-        char ts[20];
-        strftime(ts, sizeof(ts), "%I:%M %p", &ti);
-        lv_label_set_text(_news_hdr_time, ts);
-    }
+    if (!_news_hdr_time || _news_last_update_ms == 0) return;
+    unsigned long age = millis() - _news_last_update_ms;
+    lv_color_t c;
+    if      (age > 4UL * NEWS_UPDATE_MS) c = lv_color_hex(0xf44336);  // red  — very stale
+    else if (age > 2UL * NEWS_UPDATE_MS) c = lv_color_hex(0xff9800);  // orange — overdue
+    else                                 c = lv_color_hex(0x9e9e9e);   // gray — fresh
+    lv_obj_set_style_text_color(_news_hdr_time, c, 0);
 }

@@ -26,13 +26,11 @@ struct StockInfo {
 struct StocksData {
     StockInfo stocks[STOCK_COUNT];
     bool      valid;
+    time_t    fetch_time = 0;   // epoch of last successful fetch (0 = never)
 };
 
-// ─── Fetch one symbol via the chart API ───────────────────────────────────
+// ─── Fetch one symbol via the chart API (one retry on SSL/network failure) ────
 static bool fetchStockChart(const char* symbol, StockInfo& si) {
-    WiFiClientSecure client;
-    client.setInsecure();
-
     // URL-encode special characters in ticker symbols:
     //   ^ → %5E  (index symbols: ^GSPC, ^DJI)
     //   = → %3D  (futures symbols: GC=F, SI=F)
@@ -41,22 +39,38 @@ static bool fetchStockChart(const char* symbol, StockInfo& si) {
     sym.replace("=", "%3D");
 
     String url = String(YAHOO_CHART_BASE) + sym + "?range=1d&interval=1d";
+    String body;
 
-    HTTPClient http;
-    http.begin(client, url);
-    http.setTimeout(10000);
-    http.addHeader("User-Agent", "Mozilla/5.0 (compatible; SmartClock/1.0)");
-    http.addHeader("Accept",     "application/json");
-    int code = http.GET();
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (attempt > 0) {
+            Serial.printf("[STOCKS] %s retrying after 500 ms...\n", symbol);
+            delay(500);
+        }
 
-    if (code != 200) {
-        Serial.printf("[STOCKS] %s HTTP %d\n", symbol, code);
+        WiFiClientSecure client;
+        client.setInsecure();
+
+        HTTPClient http;
+        http.begin(client, url);
+        http.setTimeout(10000);
+        http.addHeader("User-Agent", "Mozilla/5.0 (compatible; SmartClock/1.0)");
+        http.addHeader("Accept",     "application/json");
+        int code = http.GET();
+
+        if (code != 200) {
+            Serial.printf("[STOCKS] %s HTTP %d (attempt %d)\n", symbol, code, attempt + 1);
+            http.end();
+            client.stop();
+            continue;   // try again
+        }
+
+        body = http.getString();
         http.end();
-        return false;
+        client.stop();   // force synchronous TCP teardown before next SSL handshake
+        break;           // success — exit retry loop
     }
 
-    String body = http.getString();
-    http.end();
+    if (body.isEmpty()) return false;
 
     // Filter to just the meta fields we need.
     // chartPreviousClose is always present for both stocks and indices.
@@ -104,24 +118,36 @@ static bool fetchStockChart(const char* symbol, StockInfo& si) {
 
 // ─── Public fetch function — one HTTPS request per symbol ─────────────────
 static bool fetchStocks(StocksData& sd) {
+    // Always refresh metadata (symbol, display name).
     for (int i = 0; i < STOCK_COUNT; i++) {
         strncpy(sd.stocks[i].symbol,       STOCK_SYMBOLS[i],       sizeof(sd.stocks[i].symbol) - 1);
         strncpy(sd.stocks[i].display_name, STOCK_DISPLAY_NAMES[i], sizeof(sd.stocks[i].display_name) - 1);
-        sd.stocks[i].valid = false;
     }
 
-    bool anyValid = false;
+    // Fetch each symbol into a temp copy so a failed request leaves the
+    // previous valid price visible rather than replacing it with "N/A".
+    bool anyNew = false;
     for (int i = 0; i < STOCK_COUNT; i++) {
-        if (fetchStockChart(STOCK_SYMBOLS[i], sd.stocks[i])) {
-            anyValid = true;
+        if (i > 0) delay(350);   // let previous SSL context + TCP socket fully release
+        StockInfo tmp = sd.stocks[i];
+        tmp.valid = false;
+        if (fetchStockChart(STOCK_SYMBOLS[i], tmp)) {
+            sd.stocks[i] = tmp;
+            anyNew = true;
             Serial.printf("[STOCKS] %-10s $%10.2f  %+.2f (%+.2f%%)\n",
                           sd.stocks[i].display_name,
                           sd.stocks[i].price,
                           sd.stocks[i].change,
                           sd.stocks[i].change_pct);
         }
+        // else: sd.stocks[i] retains its previous price rather than going N/A
     }
 
-    sd.valid = anyValid;
-    return anyValid;
+    if (anyNew) {
+        sd.fetch_time = time(nullptr);
+        sd.valid = true;
+    }
+    // sd.valid stays true from a previous successful cycle if this one fails —
+    // the preserved prices are still worth displaying.
+    return anyNew;
 }
