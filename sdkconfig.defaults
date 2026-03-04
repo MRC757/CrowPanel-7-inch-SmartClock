@@ -12,14 +12,16 @@ CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
 # packet buffers, or ArduinoJson heap documents also land in PSRAM all three
 # masters compete for the same bus, causing visible horizontal jitter.
 #
-# Threshold set to 8 KB (not 16 KB) to prevent SSL heap exhaustion:
-# mbedTLS allocates two 16 KB SSL record buffers per connection via regular
-# malloc().  At threshold=16384 these land in internal SRAM; after 3 news +
-# 6 stock SSL connections the SRAM heap fragments until the hardware SHA DMA
-# buffer (tiny, but needs contiguous SRAM) can no longer be allocated, causing
-# "esp-sha: Failed to allocate buf memory" and all subsequent SSL connections
-# to fail permanently until reboot.
-# At threshold=8192 the 16 KB record buffers go to PSRAM instead.  WiFi and
-# LwIP use explicit MALLOC_CAP_INTERNAL|DMA caps and are unaffected.
-# Small jitter-sensitive allocations (≤8 KB) still stay in SRAM.
-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=8192
+# Threshold set to 4 KB to prevent SSL heap exhaustion after multiple connections:
+# mbedTLS allocates per-connection via regular malloc():
+#   - Two 16 KB SSL record buffers (RX/TX)          → PSRAM (>4 KB)
+#   - Certificate chain parse buffers (~4–8 KB)      → PSRAM (>4 KB)
+#   - Small context structs + hash buffers (<4 KB)   → SRAM
+# With threshold=8192 the 16 KB buffers go to PSRAM, but the ~4–8 KB cert
+# buffers still land in SRAM and fragment it; after 6 stock SSL connections
+# the alerts fetch fails with "SSL - Memory allocation failed" (-32512).
+# At threshold=4096 those mid-size cert buffers also go to PSRAM, leaving
+# SRAM only for sub-4 KB allocations where fragmentation is negligible.
+# WiFi/LwIP use explicit MALLOC_CAP_INTERNAL|DMA caps and are unaffected.
+# All JSON docs use static StaticJsonDocument (BSS, not heap) — unaffected.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096

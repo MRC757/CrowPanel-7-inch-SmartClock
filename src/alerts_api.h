@@ -40,6 +40,20 @@ static bool fetchAlerts(float lat, float lon, AlertsData& ad) {
     http.addHeader("Accept",     "application/geo+json");
 
     int code = http.GET();
+    if (code == -1) {
+        // SSL alloc failure after burst of other SSL connections — retry once
+        http.end();
+        client.stop();
+        delay(500);
+        WiFiClientSecure client2;
+        client2.setInsecure();
+        http.begin(client2, url);
+        http.setTimeout(15000);
+        http.addHeader("User-Agent", "SmartClock/1.0 ESP32");
+        http.addHeader("Accept",     "application/geo+json");
+        code = http.GET();
+        Serial.printf("[ALERTS] retry HTTP %d\n", code);
+    }
     if (code != 200) {
         // 404 = point not supported (offshore / non-US). Treat as no alerts.
         if (code == 404) {
