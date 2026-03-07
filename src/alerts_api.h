@@ -28,32 +28,35 @@ struct AlertsData {
 };
 
 static bool fetchAlerts(float lat, float lon, AlertsData& ad) {
-    WiFiClientSecure client;
-    client.setInsecure();   // NWS cert rotates; setInsecure is acceptable here
-
-    HTTPClient http;
     String url = String("https://api.weather.gov/alerts/active?point=")
                + String(lat, 4) + "," + String(lon, 4);
-    http.begin(client, url);
-    http.setTimeout(15000);
-    http.addHeader("User-Agent", "SmartClock/1.0 ESP32");
-    http.addHeader("Accept",     "application/geo+json");
 
-    int code = http.GET();
-    if (code == -1) {
-        // SSL alloc failure after burst of other SSL connections — retry once
-        http.end();
-        client.stop();
-        delay(500);
-        WiFiClientSecure client2;
-        client2.setInsecure();
-        http.begin(client2, url);
+    // Retry loop: on SSL failure (-1), tear down and retry with a fresh client.
+    // The WiFiClientSecure must outlive http.getStream(), so both are scoped here.
+    WiFiClientSecure client;
+    HTTPClient http;
+    int code = 0;
+
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (attempt > 0) {
+            Serial.println("[ALERTS] retrying after 500 ms...");
+            delay(500);
+        }
+        client.stop();           // clean slate for each attempt
+        client.setInsecure();    // NWS cert rotates; setInsecure is acceptable here
+        http.begin(client, url);
         http.setTimeout(15000);
         http.addHeader("User-Agent", "SmartClock/1.0 ESP32");
         http.addHeader("Accept",     "application/geo+json");
         code = http.GET();
-        Serial.printf("[ALERTS] retry HTTP %d\n", code);
+        if (code == -1) {
+            Serial.printf("[ALERTS] attempt %d HTTP %d\n", attempt + 1, code);
+            http.end();
+            continue;
+        }
+        break;
     }
+
     if (code != 200) {
         // 404 = point not supported (offshore / non-US). Treat as no alerts.
         if (code == 404) {

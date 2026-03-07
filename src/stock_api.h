@@ -29,26 +29,60 @@ struct StocksData {
     time_t    fetch_time = 0;   // epoch of last successful fetch (0 = never)
 };
 
-// ─── Fetch one symbol via the chart API (one retry on SSL/network failure) ────
-static bool fetchStockChart(const char* symbol, StockInfo& si) {
+// ─── Fetch one symbol via the chart API ───────────────────────────────────────
+// Takes a shared WiFiClientSecure so HTTP/1.1 keep-alive can reuse the TLS
+// session across sequential same-host requests within a batch.
+// Caller must call client.stop() after the entire batch, not between symbols.
+static bool fetchStockChart(WiFiClientSecure& client, const char* symbol, StockInfo& si) {
     // URL-encode special characters in ticker symbols:
     //   ^ → %5E  (index symbols: ^GSPC, ^DJI)
     //   = → %3D  (futures symbols: GC=F, SI=F)
-    String sym = String(symbol);
-    sym.replace("^", "%5E");
-    sym.replace("=", "%3D");
+    char sym[16];
+    strncpy(sym, symbol, sizeof(sym) - 1);
+    sym[sizeof(sym) - 1] = '\0';
+    // In-place replacement: write encoded form into a separate url buffer.
+    char url[128];
+    {
+        // Build URL without Arduino String heap allocations.
+        char encoded[24] = {};
+        const char* base = YAHOO_CHART_BASE;
+        int ui = 0;
+        // Copy base
+        for (int i = 0; base[i] && ui < (int)sizeof(url) - 1; i++)
+            url[ui++] = base[i];
+        // Append URL-encoded symbol
+        for (int i = 0; sym[i] && ui < (int)sizeof(url) - 5; i++) {
+            if      (sym[i] == '^') { url[ui++]='%'; url[ui++]='5'; url[ui++]='E'; }
+            else if (sym[i] == '=') { url[ui++]='%'; url[ui++]='3'; url[ui++]='D'; }
+            else                    { url[ui++] = sym[i]; }
+        }
+        // Append query string
+        const char* qs = "?range=1d&interval=1d";
+        for (int i = 0; qs[i] && ui < (int)sizeof(url) - 1; i++)
+            url[ui++] = qs[i];
+        url[ui] = '\0';
+    }
 
-    String url = String(YAHOO_CHART_BASE) + sym + "?range=1d&interval=1d";
-    String body;
+    // Filter to just the meta fields we need — parsed directly from the stream,
+    // no intermediate String/heap allocation for the response body.
+    // chartPreviousClose is always present for both stocks and indices.
+    // regularMarketPreviousClose is often absent for index symbols (^GSPC, ^DJI).
+    StaticJsonDocument<192> filter;
+    filter["chart"]["result"][0]["meta"]["regularMarketPrice"]         = true;
+    filter["chart"]["result"][0]["meta"]["chartPreviousClose"]         = true;
+    filter["chart"]["result"][0]["meta"]["regularMarketPreviousClose"] = true;
+    filter["chart"]["result"][0]["meta"]["previousClose"]              = true;
 
+    // static → BSS segment (internal SRAM), not heap/PSRAM.
+    static StaticJsonDocument<512> doc;
+
+    bool parsed = false;
     for (int attempt = 0; attempt < 2; attempt++) {
         if (attempt > 0) {
             Serial.printf("[STOCKS] %s retrying after 500 ms...\n", symbol);
+            client.stop();   // force fresh TLS handshake on retry
             delay(500);
         }
-
-        WiFiClientSecure client;
-        client.setInsecure();
 
         HTTPClient http;
         http.begin(client, url);
@@ -60,35 +94,26 @@ static bool fetchStockChart(const char* symbol, StockInfo& si) {
         if (code != 200) {
             Serial.printf("[STOCKS] %s HTTP %d (attempt %d)\n", symbol, code, attempt + 1);
             http.end();
-            client.stop();
-            continue;   // try again
+            continue;   // retry
         }
 
-        body = http.getString();
+        // Stream directly into the filtered doc — no String/heap allocation for body.
+        // http.end() discards any unread bytes so keep-alive stays clean.
+        doc.clear();
+        DeserializationError err = deserializeJson(doc, http.getStream(),
+                                                   DeserializationOption::Filter(filter));
         http.end();
-        client.stop();   // force synchronous TCP teardown before next SSL handshake
-        break;           // success — exit retry loop
+        // Do NOT call client.stop() — keep TLS session alive for next symbol.
+
+        if (err) {
+            Serial.printf("[STOCKS] %s JSON: %s\n", symbol, err.c_str());
+            continue;
+        }
+        parsed = true;
+        break;
     }
 
-    if (body.isEmpty()) return false;
-
-    // Filter to just the meta fields we need.
-    // chartPreviousClose is always present for both stocks and indices.
-    // regularMarketPreviousClose is often absent for index symbols (^GSPC, ^DJI).
-    StaticJsonDocument<192> filter;
-    filter["chart"]["result"][0]["meta"]["regularMarketPrice"]         = true;
-    filter["chart"]["result"][0]["meta"]["chartPreviousClose"]         = true;
-    filter["chart"]["result"][0]["meta"]["regularMarketPreviousClose"] = true;
-    filter["chart"]["result"][0]["meta"]["previousClose"]              = true;
-
-    // static → BSS segment (internal SRAM), not heap/PSRAM.
-    static StaticJsonDocument<512> doc; doc.clear();
-    DeserializationError err = deserializeJson(doc, body,
-                                               DeserializationOption::Filter(filter));
-    if (err) {
-        Serial.printf("[STOCKS] %s JSON: %s\n", symbol, err.c_str());
-        return false;
-    }
+    if (!parsed) return false;
 
     JsonObject meta = doc["chart"]["result"][0]["meta"];
     if (meta.isNull()) {
@@ -116,7 +141,11 @@ static bool fetchStockChart(const char* symbol, StockInfo& si) {
     return si.valid;
 }
 
-// ─── Public fetch function — one HTTPS request per symbol ─────────────────
+// ─── Public fetch function — one shared TLS session for all symbols ───────────
+// A single WiFiClientSecure is reused across all STOCK_COUNT requests.
+// HTTP/1.1 keep-alive means only the FIRST symbol does a full TLS handshake;
+// subsequent symbols reuse the existing session — drastically fewer mbedTLS
+// alloc/free cycles per batch, which slows SRAM heap fragmentation.
 static bool fetchStocks(StocksData& sd) {
     // Always refresh metadata (symbol, display name).
     for (int i = 0; i < STOCK_COUNT; i++) {
@@ -124,14 +153,17 @@ static bool fetchStocks(StocksData& sd) {
         strncpy(sd.stocks[i].display_name, STOCK_DISPLAY_NAMES[i], sizeof(sd.stocks[i].display_name) - 1);
     }
 
+    // One client for the entire batch — keep-alive reuses TLS across symbols.
+    WiFiClientSecure client;
+    client.setInsecure();
+
     // Fetch each symbol into a temp copy so a failed request leaves the
     // previous valid price visible rather than replacing it with "N/A".
     bool anyNew = false;
     for (int i = 0; i < STOCK_COUNT; i++) {
-        if (i > 0) delay(350);   // let previous SSL context + TCP socket fully release
         StockInfo tmp = sd.stocks[i];
         tmp.valid = false;
-        if (fetchStockChart(STOCK_SYMBOLS[i], tmp)) {
+        if (fetchStockChart(client, STOCK_SYMBOLS[i], tmp)) {
             sd.stocks[i] = tmp;
             anyNew = true;
             Serial.printf("[STOCKS] %-10s $%10.2f  %+.2f (%+.2f%%)\n",
@@ -142,6 +174,8 @@ static bool fetchStocks(StocksData& sd) {
         }
         // else: sd.stocks[i] retains its previous price rather than going N/A
     }
+
+    client.stop();   // explicit teardown once after all symbols are done
 
     if (anyNew) {
         sd.fetch_time = time(nullptr);

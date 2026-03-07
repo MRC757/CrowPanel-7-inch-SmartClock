@@ -102,6 +102,75 @@ static void _add_y_axis_labels(lv_obj_t* scr, int chart_y,
     }
 }
 
+// ─── Fill callback: polygon shading below each series line ────────────────────
+// user_data points to a _HlyFill struct with the per-chart data/range/colour.
+// All coordinates are computed directly from chart->coords + compile-time
+// layout constants — no LVGL function calls, no heap/buf allocation.
+struct _HlyFill { lv_coord_t* data; int y_min, y_max; uint32_t color_hex; };
+static _HlyFill _hly_fill_temp, _hly_fill_wind, _hly_fill_prec;
+
+static void _hly_fill_draw_cb(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_DRAW_MAIN) return;
+
+    _HlyFill*      fi       = (_HlyFill*)lv_event_get_user_data(e);
+    lv_obj_t*      chart    = lv_event_get_target(e);
+    lv_draw_ctx_t* draw_ctx = lv_event_get_draw_ctx(e);
+
+    // Content geometry (constants match _make_hly_chart setup).
+    static const int cw = SCREEN_WIDTH - _HLY_Y_AXIS_W - 4;  // 756 px
+    static const int ch = _HLY_CHART_H - 8;                   // 102 px
+
+    const lv_coord_t ox  = chart->coords.x1;       // reflects per-tick scroll
+    const lv_coord_t oy  = chart->coords.y1 + 4;   // pad_top = 4
+    const lv_coord_t bot = oy + (lv_coord_t)ch - 1;
+
+    lv_draw_rect_dsc_t dsc;
+    lv_draw_rect_dsc_init(&dsc);
+    dsc.bg_color = lv_color_hex(fi->color_hex);
+    dsc.bg_opa   = LV_OPA_40;
+    dsc.radius   = 0;
+
+    // Draw one filled rect per adjacent data-point pair (no polygon, no heap alloc).
+    // top of each rect = min(y[i], y[i+1]) so the fill never extends above the line.
+    const int n   = HOURLY_COUNT;
+    const int rng = fi->y_max - fi->y_min;
+
+    auto px_y = [&](int i) -> lv_coord_t {
+        int val = (int)fi->data[i];
+        if (val < fi->y_min) val = fi->y_min;
+        if (val > fi->y_max) val = fi->y_max;
+        return (lv_coord_t)(oy + ch - (int32_t)(val - fi->y_min) * ch / rng);
+    };
+
+    // Pre-compute pixel-y for all data points (avoids redundant recalculation).
+    lv_coord_t ys[HOURLY_COUNT];
+    for (int i = 0; i < n; i++) ys[i] = px_y(i);
+
+    // Subdivide each inter-sample segment into SUBSTEPS sub-rects with linearly
+    // interpolated top edges — reduces staircase from ~10 px to ~2 px per step.
+    const int SUBSTEPS = 4;
+    for (int i = 0; i < n - 1; i++) {
+        lv_coord_t xi    = (lv_coord_t)(ox + (int32_t)i       * cw / (n - 1));
+        lv_coord_t xip1  = (lv_coord_t)(ox + (int32_t)(i + 1) * cw / (n - 1));
+        lv_coord_t yi    = ys[i];
+        lv_coord_t yip1  = ys[i + 1];
+        lv_coord_t seg_w = xip1 - xi;
+
+        for (int s = 0; s < SUBSTEPS; s++) {
+            lv_coord_t xa  = xi + (lv_coord_t)(seg_w * s       / SUBSTEPS);
+            lv_coord_t xb  = xi + (lv_coord_t)(seg_w * (s + 1) / SUBSTEPS) - 1;
+            lv_coord_t ya  = yi  + (lv_coord_t)((yip1 - yi) * s       / SUBSTEPS);
+            lv_coord_t yb  = yi  + (lv_coord_t)((yip1 - yi) * (s + 1) / SUBSTEPS);
+            lv_coord_t top = LV_MIN(ya, yb);
+            lv_area_t  area = { xa, top, xb, bot };
+            lv_draw_rect(draw_ctx, &dsc, &area);
+        }
+    }
+    // Final column for the last data point
+    lv_area_t last = { (lv_coord_t)(ox + cw - 1), ys[n - 1], (lv_coord_t)(ox + cw), bot };
+    lv_draw_rect(draw_ctx, &dsc, &last);
+}
+
 // ─── Helper: create one chart row ─────────────────────────────────────────────
 // row_y     — y position of the row label (chart sits _HLY_LBL_H below)
 // color     — series line colour
@@ -266,6 +335,16 @@ inline lv_obj_t* ui_hourly_create()
                                    0, 100, 6,
                                    _h_prec, &_ser_prec);
     _add_y_axis_labels(scr, _HLY_ROW2_Y + _HLY_LBL_H, 0, 100, 6, "%");
+
+    // ── Area fill callbacks ────────────────────────────────────────────────
+    // Each struct carries the data pointer, y-axis range, and colour so the
+    // shared callback can compute pixel positions without calling lv_obj_ APIs.
+    _hly_fill_temp = { _h_temp, -10, 110, 0xff7043 };
+    _hly_fill_wind = { _h_wind,   0,  50, 0x4dd0e1 };
+    _hly_fill_prec = { _h_prec,   0, 100, 0x4fc3f7 };
+    lv_obj_add_event_cb(_chart_temp, _hly_fill_draw_cb, LV_EVENT_DRAW_MAIN, &_hly_fill_temp);
+    lv_obj_add_event_cb(_chart_wind, _hly_fill_draw_cb, LV_EVENT_DRAW_MAIN, &_hly_fill_wind);
+    lv_obj_add_event_cb(_chart_prec, _hly_fill_draw_cb, LV_EVENT_DRAW_MAIN, &_hly_fill_prec);
 
     // ── Midnight / Noon vertical markers ──────────────────────────────────
     // Created AFTER charts so they render on top (higher z-order).
