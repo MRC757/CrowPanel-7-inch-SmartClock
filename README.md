@@ -2,8 +2,7 @@
 
 A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI ESP32-S3** *(SKU: DIS02170A, V1.3)* (800×480 IPS touchscreen). Displays local time, weather, 5-day forecast, 3-day hourly charts, market data, live breaking news, ISS pass times, weather alerts, NFL scores, and NBA scores for the Lakers & Warriors — with automatic night dimming and audible severe-weather alerts.
 
-![Smart Clock Layout](docs/layout.png)
-> *(screenshot placeholder — add your own after first boot)*
+
 ![Display1](https://github.com/user-attachments/assets/6e37edf4-9a64-4caa-8f44-121635a18953)
 ![Display2](https://github.com/user-attachments/assets/6005859e-6a26-437c-a2e0-1ff4771726a8)
 
@@ -597,4 +596,5 @@ Enable verbose serial output by opening a monitor at **115200 baud** (`pio devic
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
 
