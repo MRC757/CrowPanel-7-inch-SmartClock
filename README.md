@@ -2,9 +2,8 @@
 
 A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI ESP32-S3** *(SKU: DIS02170A, V1.3)* (800×480 IPS touchscreen). Displays local time, weather, 5-day forecast, 3-day hourly charts, market data, live breaking news, ISS pass times, weather alerts, NFL scores, and NBA scores for the Lakers & Warriors — with automatic night dimming and audible severe-weather alerts.
 
-
-![Display1](https://github.com/user-attachments/assets/6e37edf4-9a64-4caa-8f44-121635a18953)
-![Display2](https://github.com/user-attachments/assets/6005859e-6a26-437c-a2e0-1ff4771726a8)
+![Smart Clock Layout](docs/layout.png)
+> *(screenshot placeholder — add your own after first boot)*
 
 ---
 
@@ -18,7 +17,7 @@ A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI 
 | **Sunrise & Sunset** | Today's rise/set times in the weather panel (from Open-Meteo, no extra request) |
 | **Moon Phase** | Current lunar phase calculated locally — no network request |
 | **5-Day Forecast** | Dedicated screen: daily high/low, condition, precipitation, UV index per day |
-| **3-Day Hourly Charts** | Scrollable temperature, wind speed, and precip-chance line charts across 72 hours; auto-scrolls so current time is always at the left edge; Midnight/Noon markers and Y-axis labels |
+| **3-Day Hourly Charts** | Scrollable temperature, wind speed, and precip-chance line charts across 72 hours; semi-transparent area shading below each line; auto-scrolls so current time is always at the left edge; Midnight/Noon markers and Y-axis labels |
 | **UV Index** | Daily maximum UV index on every forecast card |
 | **ISS Pass Times** | Next 3 ISS visible passes scrolling at the bottom of the Forecast screen |
 | **Weather Alerts** | NWS active alerts (tornado, flood, severe storm) shown as a red banner across all screens |
@@ -194,6 +193,7 @@ Gold and Silver use Yahoo Finance COMEX front-month futures tickers (`GC=F`, `SI
 - Standalone Y-axis labels at fixed screen positions
 - Midnight (blue) and Noon (gold) vertical marker lines with "12A"/"12P" labels
 - Day-of-week labels aligned above each noon marker (correct regardless of time of day)
+- **Semi-transparent area fill** below each line — drawn via `LV_EVENT_DRAW_MAIN` callback with subdivided rects for smooth diagonal edges
 - **Smooth auto-scroll** — within each hour the charts slide left so the current time is always at the left edge; snaps back on hourly data refresh
 
 ### NFL Screen
@@ -302,7 +302,7 @@ The CrowPanel 7" uses an ESP32-S3 RGB parallel panel (`Panel_RGB`). Getting stab
 | `LV_COLOR_16_SWAP 1` | `lv_conf.h` | LVGL pre-swaps pixel bytes so `pushImageDMA` raw-copies to the Panel_RGB framebuffer in the correct byte order the LCD_CAM expects |
 | LVGL render buffers in SRAM | `main.cpp` | Two 20-line (32 KB) SRAM buffers keep CPU compositing off the PSRAM bus; only the final `pushImageDMA` touches PSRAM |
 | Per-scanline `startWrite/endWrite` in flush | `main.cpp disp_flush()` | ESP32-S3 D-cache = 32 KB = exact size of one LVGL flush strip. Without `endWrite()` the D-cache is never flushed to PSRAM and the vsync double-buffer swap never fires. Per-row pairs limit each PSRAM writeback burst to ~1.6 KB (25 cache lines) and keep `display()` flip flag set each row (boolean — idempotent). See full history in [Display Jitter Troubleshooting](#display-jitter-troubleshooting) |
-| `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096` | `sdkconfig.defaults` | `malloc()` calls ≤4 KB go to internal SRAM; everything larger goes to PSRAM. Threshold is 4 KB so both mbedTLS 16 KB record buffers AND 4–8 KB certificate parse buffers go to PSRAM, preventing SRAM fragmentation and SSL alloc failures after 6 stock + alerts SSL connections |
+| `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096` | `sdkconfig.defaults` | Keeps non-SSL `malloc()` allocations ≤4 KB in internal SRAM to reduce PSRAM bus traffic during WiFi and JSON activity. WiFi/LwIP use explicit `MALLOC_CAP_INTERNAL\|DMA` and are unaffected. Larger allocations (ArduinoJson, HTTPClient) go to PSRAM. |
 | `static StaticJsonDocument<N>` in API files | all `*_api.h` | JSON parse documents allocated in BSS (internal SRAM) — no heap, no PSRAM bus traffic during JSON parsing |
 | `LV_THEME_DEFAULT_TRANSITION_TIME 0` | `lv_conf.h` | Disables LVGL press/focus animations that generate continuous flush calls |
 | `LV_THEME_DEFAULT_GROW 0` | `lv_conf.h` | Disables grow-on-press effect for the same reason |
@@ -316,7 +316,7 @@ Horizontal jitter on this board has three distinct sources, each requiring a sep
 | Source | Symptom | Fix |
 |---|---|---|
 | **D-cache burst on flush** | Jitter on every button/keyboard press | Per-scanline `startWrite/endWrite` in `disp_flush()` — limits each PSRAM burst to ~1.6 KB |
-| **WiFi/LwIP DMA during connect & downloads** | Jitter on startup and while fetching data | `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096` in `sdkconfig.defaults` — keeps network buffers in internal SRAM |
+| **WiFi/LwIP DMA during connect & downloads** | Jitter on startup and while fetching data | `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096` in `sdkconfig.defaults` — keeps non-SSL `malloc()` allocations in internal SRAM |
 | **ArduinoJson heap in PSRAM** | Jitter while parsing JSON responses | `static StaticJsonDocument<N>` in all `*_api.h` files — BSS segment = internal SRAM |
 
 ### Approaches that did NOT work
@@ -328,8 +328,8 @@ Horizontal jitter on this board has three distinct sources, each requiring a sep
 | Removed `endWrite()` entirely (no start, no end) | No D-cache flush, no buffer swap; user reported this made jitter **worse** |
 | `CONFIG_LCD_RGB_BOUNCE_BUFFER_SIZE` build flag | No effect — LovyanGFX uses its own GDMA, not the Espressif `esp_lcd_panel_rgb` driver |
 | Upgrading LVGL to 8.3.11 | Not a cause; version difference has no impact on jitter |
-| `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384` | mbedTLS 16 KB SSL record buffers land in SRAM; after ~3 SSL connections SRAM fragments until the SHA DMA buffer fails: `esp-sha: Failed to allocate buf memory` |
-| `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=8192` | 16 KB record buffers go to PSRAM, but 4–8 KB certificate parse buffers still land in SRAM; after 6 stock SSL connections the alerts fetch fails with `SSL - Memory allocation failed` (-32512) |
+| `CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y` in `sdkconfig.defaults` | **Causes boot crash** — this is a compile-time option baked into the pre-compiled Arduino-ESP32 mbedTLS library. Setting it via `sdkconfig.defaults` creates a configuration conflict that triggers interrupt WDT timeout on boot. SSL heap exhaustion is instead handled by `recover_ssl_heap()` (disconnect/reconnect WiFi when total free SRAM drops below 70 KB — threshold is conservative because `get_free_size()` returns total free, not largest contiguous block) plus reactive recovery in `do_stocks_fetch()` (if all 6 symbols fail, force a WiFi cycle and retry once) and HTTP keep-alive to reuse TLS sessions across stock fetches. |
+| `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384 / 8192 / 4096` (threshold tuning) | mbedTLS calls `heap_caps_calloc(MALLOC_CAP_INTERNAL)` directly — it **completely bypasses** the `SPIRAM_MALLOC_ALWAYSINTERNAL` threshold. Threshold tuning alone has no effect on SSL heap exhaustion; the real fix is `recover_ssl_heap()` + HTTP keep-alive. |
 
 ---
 
@@ -526,8 +526,8 @@ static const char* STOCK_DISPLAY_NAMES[STOCK_COUNT] = {
 | Image shifts left/right | Pixel clock or vsync timing wrong | Verify `freq_write = 16000000`; hsync 40/48/40; vsync 8/4/8 in `LGFX_Driver.h` |
 | Horizontal shift artifact | Incorrect flush pattern | Verify `disp_flush()` uses per-scanline `startWrite/endWrite` — see [Display Stability Notes](#display-stability-notes) |
 | Screen jitters on touch/button | D-cache burst to PSRAM | Confirm per-scanline `startWrite/endWrite` in `disp_flush()`; no persistent `gfx.startWrite()` in `setup()` |
-| Screen jitters on startup or download | WiFi/JSON PSRAM contention | Confirm `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096` in `sdkconfig.defaults` and `static StaticJsonDocument` in all `*_api.h` |
-| `[ALERTS] HTTP -1` / SSL alloc failure after stock fetch | SRAM heap fragmented by burst of SSL connections | Confirm `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096` in `sdkconfig.defaults`; run `pio run --target clean` then re-flash |
+| Screen jitters on startup or download | WiFi/JSON PSRAM contention | Confirm `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096` and `static StaticJsonDocument` in all `*_api.h` |
+| All SSL connections fail after extended uptime (`HTTP -1` on stocks and alerts) | mbedTLS SRAM heap fragmented after ~300–400 SSL handshakes (~12 h uptime) — cert-parse fragments persist across WiFi cycles | Three-layer recovery in `main.cpp`: (1) `recover_ssl_heap()` proactively cycles WiFi when free SRAM < 70 KB; (2) if all 6 stock symbols fail, one reactive WiFi cycle + retry; (3) if retry still fails AND free SRAM < 65 KB, call `ESP.restart()` — BM8563 RTC preserves time, NVS preserves credentials, device recovers in ~10 s with a clean heap. WiFi cycling alone does NOT defragment SRAM because mbedTLS cert-parse fragments are independent of WiFi/LwIP state |
 | Screen flickers on touch | LVGL theme animations enabled | Confirm `LV_THEME_DEFAULT_TRANSITION_TIME 0` and `LV_THEME_DEFAULT_GROW 0` in `lv_conf.h` |
 | Wrong colors at night brightness | LV_COLOR_16_SWAP not accounted for | Pixel scaler must call `__builtin_bswap16()` before/after channel extraction — see `backlight.h` |
 | No buzzer beep on boot | STC8H not responding | Verify I2C bus initialized before `buzzer_on()`; check serial for I2C errors |
@@ -588,7 +588,7 @@ Enable verbose serial output by opening a monitor at **115200 baud** (`pio devic
 - **WiFi scan blocks UI** — `WiFi.scanNetworks()` is synchronous (~2 seconds). Acceptable for one-time setup.
 - **Stock fetches block UI briefly** — 6 separate HTTPS requests (~2–3 s each, up to ~18 s total). Occurs only every 5 minutes.
 - **RTC battery** — The BM8563's backup battery maintains time when the board is unpowered. If the battery is depleted, the VL flag is set and the driver falls back to NTP sync on next WiFi connection.
-- **Panel_RGB DMA / jitter** — Three root causes fully diagnosed and fixed: D-cache burst (per-scanline flush), WiFi/LwIP PSRAM contention (`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL`), and ArduinoJson heap in PSRAM (`static StaticJsonDocument`). See [Display Jitter Troubleshooting](#display-jitter-troubleshooting).
+- **Panel_RGB DMA / jitter** — Three root causes fully diagnosed and fixed: D-cache burst (per-scanline flush), WiFi/LwIP PSRAM contention (`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096`), and ArduinoJson heap in PSRAM (`static StaticJsonDocument`). See [Display Jitter Troubleshooting](#display-jitter-troubleshooting).
 - **Google News RSS locale** — The feed is fixed to `en-US`. To target a different country or language, change the `hl=`, `gl=`, and `ceid=` parameters in `GOOGLE_NEWS_RSS` in `src/news_api.h`.
 
 ---
@@ -596,5 +596,3 @@ Enable verbose serial output by opening a monitor at **115200 baud** (`pio devic
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
-

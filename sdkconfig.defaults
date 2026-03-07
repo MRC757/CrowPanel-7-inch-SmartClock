@@ -6,22 +6,16 @@
 # manifests as the image shifting left/right on screen.
 CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
 
-# Keep small heap allocations in internal SRAM instead of routing them to PSRAM.
-# The ESP32-S3 PSRAM bus is shared by LCD_CAM GDMA (continuous front-buffer reads)
-# and the CPU D-cache (back-buffer writes during flush).  When WiFi DMA, LwIP
-# packet buffers, or ArduinoJson heap documents also land in PSRAM all three
-# masters compete for the same bus, causing visible horizontal jitter.
-#
-# Threshold set to 4 KB to prevent SSL heap exhaustion after multiple connections:
-# mbedTLS allocates per-connection via regular malloc():
-#   - Two 16 KB SSL record buffers (RX/TX)          → PSRAM (>4 KB)
-#   - Certificate chain parse buffers (~4–8 KB)      → PSRAM (>4 KB)
-#   - Small context structs + hash buffers (<4 KB)   → SRAM
-# With threshold=8192 the 16 KB buffers go to PSRAM, but the ~4–8 KB cert
-# buffers still land in SRAM and fragment it; after 6 stock SSL connections
-# the alerts fetch fails with "SSL - Memory allocation failed" (-32512).
-# At threshold=4096 those mid-size cert buffers also go to PSRAM, leaving
-# SRAM only for sub-4 KB allocations where fragmentation is negligible.
-# WiFi/LwIP use explicit MALLOC_CAP_INTERNAL|DMA caps and are unaffected.
+# Lower the SPIRAM threshold so that allocations > 4 KB (including mbedTLS SSL
+# buffers of ~16 KB each) go to PSRAM instead of fragmenting internal SRAM.
+# WiFi/LwIP DMA buffers use explicit MALLOC_CAP_INTERNAL|DMA caps — unaffected.
 # All JSON docs use static StaticJsonDocument (BSS, not heap) — unaffected.
+# LVGL render buffers are allocated with explicit caps — unaffected.
+#
+# NOTE: CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y would be the ideal fix (forces all
+# mbedTLS allocations to PSRAM) but it is a compile-time option baked into the
+# pre-compiled Arduino-ESP32 mbedTLS library and cannot be overridden via
+# sdkconfig.defaults.  This threshold is the next best thing — it catches the
+# large record buffers (2×16 KB) via regular malloc(), though small SSL context
+# structs (~440 B) still land in SRAM.
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096

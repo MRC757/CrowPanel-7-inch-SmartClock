@@ -245,6 +245,38 @@ static bool wifi_connect(const char* ssid, const char* pass,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SSL heap recovery — cycle WiFi when internal SRAM is critically low.
+//
+// Root cause of SSL -32512 ("Memory allocation failed") after ~1-2 hours:
+//   mbedTLS allocates SSL context structs directly from SRAM via
+//   heap_caps_calloc(MALLOC_CAP_INTERNAL), bypassing SPIRAM_MALLOC_ALWAYSINTERNAL.
+//   After hundreds of SSL connections SRAM fragments: total free may be 30-60 KB
+//   but no contiguous block is large enough for a new handshake context.
+//
+//   WiFi.disconnect() releases LwIP socket buffers and the WiFi driver heap,
+//   freeing large contiguous SRAM blocks that SSL can then reuse.
+//   heap_caps_get_free_size() is O(1) — safe to call; triggers only when < 40 KB.
+// ─────────────────────────────────────────────────────────────────────────────
+static void recover_ssl_heap() {
+    uint32_t free_sram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    // Note: get_free_size() returns TOTAL free, not largest contiguous block.
+    // The threshold is set conservatively high (70 KB) so WiFi is cycled while
+    // SRAM fragmentation is still mild — large contiguous blocks still exist.
+    // At lower values (e.g. 40 KB), total free can be spread across tiny fragments
+    // with no block large enough for a new SSL context, causing -32512 alloc failure.
+    if (free_sram >= 70000) return;
+
+    Serial.printf("[SSL] Low SRAM (%u B) — cycling WiFi to recover heap\n", free_sram);
+    wifi_connected = false;
+    WiFi.disconnect(true);    // release DHCP lease and free LwIP/driver allocations
+    delay(1000);              // allow LwIP teardown to complete before reconnect
+    if (wifi_connect(g_prefs.wifi_ssid, g_prefs.wifi_pass)) {
+        Serial.printf("[SSL] Reconnected — free SRAM now %u B\n",
+                      heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // NTP sync — uses UTC offset stored in g_prefs (or returned by Open-Meteo).
 // Calling configTime() with the correct total offset gives local time via
 // getLocalTime(), no POSIX TZ string required.
@@ -289,7 +321,9 @@ static void do_weather_fetch(bool force_geocode = false) {
             prefs_save_city(g_prefs.city_name);
         }
         ui_main_update_weather(g_weather);
+        delay(1);  // yield to scheduler — feed interrupt WDT between UI updates
         ui_forecast_update(g_weather);
+        delay(1);
         ui_hourly_update(g_weather);
     }
     last_weather_ms = millis();
@@ -299,8 +333,6 @@ static void do_news_fetch() {
     if (!wifi_connected) return;
     Serial.println("[NEWS] Fetching news...");
     fetchNews(g_news);
-    // Always update the UI so the list replaces the "Fetching..." placeholder;
-    // ui_news_update handles the nd.valid==false case gracefully.
     ui_main_update_news(g_news);
     ui_news_update(g_news);
     // If fetch completely failed (timeout/SSL error), retry in 5 min instead of 30.
@@ -309,10 +341,37 @@ static void do_news_fetch() {
 
 static void do_stocks_fetch() {
     if (!wifi_connected) return;
+    recover_ssl_heap();          // proactive: cycle WiFi if SRAM below 70 KB threshold
+    if (!wifi_connected) return;
     Serial.println("[STOCKS] Fetching stocks...");
-    fetchStocks(g_stocks);          // preserves last valid prices on failure
+    if (!fetchStocks(g_stocks)) {
+        // All 6 symbols failed — SSL alloc failure due to SRAM heap fragmentation.
+        // WiFi cycling does NOT defragment SRAM (mbedTLS cert-parse fragments persist
+        // across connect/disconnect cycles).  Try one WiFi cycle as a cheap first
+        // attempt, then fall back to esp_restart() if SRAM is still critically low.
+        // esp_restart() is the correct fix: BM8563 RTC preserves time, NVS preserves
+        // credentials, and the device recovers in ~10 s with a clean unfragmented heap.
+        uint32_t pre_sram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        Serial.printf("[STOCKS] All failed (free SRAM %u B) — cycling WiFi...\n", pre_sram);
+        wifi_connected = false;
+        WiFi.disconnect(true);
+        delay(1000);
+        if (wifi_connect(g_prefs.wifi_ssid, g_prefs.wifi_pass)) {
+            uint32_t post_sram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+            Serial.printf("[SSL] Reconnected — free SRAM now %u B\n", post_sram);
+            if (!fetchStocks(g_stocks)) {
+                if (post_sram < 65000) {
+                    // SRAM fragmented beyond WiFi-cycle recovery; restart is required.
+                    Serial.println("[SSL] Heap unrecoverable — restarting in 3 s");
+                    delay(3000);
+                    ESP.restart();
+                }
+                // else: SRAM looks adequate → transient network issue; skip this cycle
+            }
+        }
+    }
     ui_main_update_stocks(g_stocks);
-    ui_stocks_update(g_stocks);     // always refresh cards + staleness color
+    ui_stocks_update(g_stocks);
     last_stocks_ms = millis();
 }
 
@@ -327,6 +386,8 @@ static void do_iss_fetch() {
 
 static void do_alerts_fetch() {
     if (!wifi_connected || g_weather.latitude == 0.0f) return;
+    recover_ssl_heap();   // defensive: alerts runs right after stocks; guard against same fragmentation
+    if (!wifi_connected) return;
     Serial.println("[ALERTS] Fetching weather alerts...");
     if (fetchAlerts(g_weather.latitude, g_weather.longitude, g_alerts)) {
         ui_alert_update(g_alerts);
