@@ -1,0 +1,27 @@
+# ─── PlatformIO build artifacts ───────────────────────────────────────────────
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# ─── VSCode ───────────────────────────────────────────────────────────────────
+.vscode/
+
+# ─── macOS ────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ─── Windows ──────────────────────────────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ─── Python (PlatformIO uses Python internally) ───────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+
+# ─── Secrets — never commit WiFi credentials or API keys ──────────────────────
+secrets.h
+credentials.h
+*.env
