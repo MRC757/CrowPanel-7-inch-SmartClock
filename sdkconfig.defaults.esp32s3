@@ -1,0 +1,31 @@
+# Smart Clock — ESP32-S3 specific SDK overrides (IDF 5.x)
+# PlatformIO automatically merges this file for ESP32-S3 targets after sdkconfig.defaults.
+#
+# These settings require IDF 5.x (Jason2866 platform-espressif32 #Arduino/IDF53).
+# They are NOT compatible with the official platformio/espressif32 platform (IDF 4.4.x).
+
+# --- 120 MHz OPI PSRAM ---
+# CONFIG_IDF_EXPERIMENTAL_FEATURES unlocks CONFIG_SPIRAM_SPEED_120M in IDF 5.x.
+# Without it the build rejects 120M as an invalid speed selection.
+# Safe on ESP32-S3R8 (8 MB OPI PSRAM) as used by the CrowPanel Advance 7" V1.3.
+CONFIG_IDF_EXPERIMENTAL_FEATURES=y
+CONFIG_SPIRAM_SPEED_120M=y
+
+# Keep frequently-called functions and read-only data in PSRAM to free IRAM.
+# LCD_CAM GDMA already saturates PSRAM bus; these add negligible extra traffic.
+CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
+CONFIG_SPIRAM_RODATA=y
+
+# --- CPU and bus performance ---
+# 240 MHz CPU is the rated max for ESP32-S3; matches CrowPanel factory firmware.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# 1 kHz FreeRTOS tick improves LVGL touch responsiveness and timer accuracy.
+CONFIG_FREERTOS_HZ=1000
+
+# 32-byte D-cache line aligns LCD DMA transfers to cache boundaries,
+# reducing the number of writeback operations that compete with GDMA.
+CONFIG_ESP32S3_DATA_CACHE_LINE_32B=y
+
+# Optimize for speed rather than code size.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
