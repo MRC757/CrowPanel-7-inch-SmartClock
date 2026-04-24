@@ -1,18 +1,12 @@
 #pragma once
 // ─────────────────────────────────────────────────────────────────────────────
-// joke_api.h — Random joke from API League
+// joke_api.h — Random dad joke from RapidAPI Dad Jokes
 //
-// Endpoint: GET https://api.apileague.com/retrieve-random-joke
-//             ?include-tags=kids&min-rating=0.5&max-length=250&api-key=KEY
+// Endpoint: GET https://dad-jokes.p.rapidapi.com/random/joke
+// Headers:  x-rapidapi-host: dad-jokes.p.rapidapi.com
+//           x-rapidapi-key:  <RAPIDAPI_JOKE_KEY>
 //
-// Response: { "id": N, "joke": "...", "setup": "...", "punchline": "...",
-//             "rating": 4.5, "tags": [...] }
-//
-// Two-part jokes (knock-knock, Q&A) carry both "setup" and "punchline".
-// One-liners carry only "joke" with "setup"/"punchline" absent or null.
-//
-// API League free tier: 50 tokens/day.  At a 3-hour interval the clock
-// uses ≤ 8 requests/day, well within the limit.
+// Response: { "body": [{ "setup": "...", "punchline": "..." }], "success": true }
 // ─────────────────────────────────────────────────────────────────────────────
 #include <Arduino.h>
 #include <WiFiClientSecure.h>
@@ -22,27 +16,25 @@
 #include "secrets.h"
 
 struct JokeData {
-    char   setup[400];      // setup question or full one-liner text
-    char   punchline[400];  // punchline; empty string for one-liners
+    char   setup[400];      // setup / question
+    char   punchline[400];  // punchline
     bool   valid;
     time_t fetch_time;      // epoch of last successful fetch (0 = never)
 };
 
-// ─── Fetch one joke from API League ──────────────────────────────────────────
+// ─── Fetch one joke from Dad Jokes RapidAPI ──────────────────────────────────
 static bool fetchJoke(JokeData& jd) {
     jd.valid = false;
 
     WiFiClientSecure client;
     client.setInsecure();
 
-    char url[256];
-    snprintf(url, sizeof(url), "%s?include-tags=%s&min-rating=0.5&max-length=250&api-key=%s",
-             APILEAGUE_JOKE_BASE, APILEAGUE_JOKE_TAGS, APILEAGUE_API_KEY);
-
     HTTPClient http;
-    http.begin(client, url);
+    http.begin(client, DAD_JOKES_URL);
     http.setTimeout(10000);
-    http.addHeader("Accept", "application/json");
+    http.addHeader("Content-Type",   "application/json");
+    http.addHeader("x-rapidapi-host", "dad-jokes.p.rapidapi.com");
+    http.addHeader("x-rapidapi-key",  RAPIDAPI_JOKE_KEY);
     int code = http.GET();
 
     if (code != 200) {
@@ -65,31 +57,27 @@ static bool fetchJoke(JokeData& jd) {
         return false;
     }
 
-    // Two-part jokes use "setup" + "punchline"; one-liners use "joke".
-    const char* setup     = doc["setup"]     | "";
-    const char* punchline = doc["punchline"] | "";
-    const char* joke      = doc["joke"]      | "";
-
-    if (strlen(setup) > 0) {
-        strncpy(jd.setup,     setup,     sizeof(jd.setup)     - 1);
-        strncpy(jd.punchline, punchline, sizeof(jd.punchline) - 1);
-    } else if (strlen(joke) > 0) {
-        strncpy(jd.setup,     joke, sizeof(jd.setup) - 1);
-        jd.punchline[0] = '\0';
-    } else {
-        Serial.println("[JOKE] Empty response");
+    JsonArray arr = doc["body"].as<JsonArray>();
+    if (arr.isNull() || arr.size() == 0) {
+        Serial.println("[JOKE] Empty body array");
         return false;
     }
 
+    const char* setup     = arr[0]["setup"]     | "";
+    const char* punchline = arr[0]["punchline"] | "";
+
+    if (strlen(setup) == 0) {
+        Serial.println("[JOKE] Missing setup field");
+        return false;
+    }
+
+    strncpy(jd.setup,     setup,     sizeof(jd.setup)     - 1);
+    strncpy(jd.punchline, punchline, sizeof(jd.punchline) - 1);
     jd.setup    [sizeof(jd.setup)     - 1] = '\0';
     jd.punchline[sizeof(jd.punchline) - 1] = '\0';
     jd.valid      = true;
     jd.fetch_time = time(nullptr);
 
-    if (strlen(jd.punchline) > 0) {
-        Serial.printf("[JOKE] Q: %s\n[JOKE] A: %s\n", jd.setup, jd.punchline);
-    } else {
-        Serial.printf("[JOKE] %s\n", jd.setup);
-    }
+    Serial.printf("[JOKE] Q: %s\n[JOKE] A: %s\n", jd.setup, jd.punchline);
     return true;
 }

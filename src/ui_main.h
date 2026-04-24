@@ -226,7 +226,7 @@ inline lv_obj_t* ui_main_create() {
     for (int i = 0; i < STOCK_COUNT; i++) {
         int ry = 24 + i * row_h;
 
-        _lbl_stock_name[i] = make_label(stk_panel, STOCK_DISPLAY_NAMES[i],
+        _lbl_stock_name[i] = make_label(stk_panel, STOCK_NAMES_DEFAULT[i],
                                          &lv_font_montserrat_14,
                                          lv_color_hex(CLR_SUBTEXT), 0, ry);
 

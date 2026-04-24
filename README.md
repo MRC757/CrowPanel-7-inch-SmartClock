@@ -1,6 +1,6 @@
 # Smart Clock
 
-A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI ESP32-S3** *(SKU: DIS02170A, V1.3)* (800×480 IPS touchscreen). Displays local time, weather, 5-day forecast, 3-day hourly charts, market data, live breaking news, ISS pass times, weather alerts, NFL scores, NBA scores for the Lakers & Warriors, and random jokes — with automatic night dimming and audible severe-weather alerts.
+A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI ESP32-S3** *(SKU: DIS02170A, V1.3)* (800×480 IPS touchscreen). Displays local time, weather, 5-day forecast, 3-day hourly charts, market data, live breaking news, ISS pass times, weather alerts, NFL scores, NBA scores for any two configurable teams, and random dad jokes — with automatic night dimming, audible severe-weather alerts, and configurable stock symbols and NBA teams via the on-screen setup.
 
 ![Smart Clock Layout](docs/layout.png)
 > *(screenshot placeholder — add your own after first boot)*
@@ -25,12 +25,12 @@ A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI 
 | **Market Data** | S&P 500, DOW Jones, VYMI, VYM, Gold (GC=F), Silver (SI=F) — price, change, change % |
 | **News** | Google News RSS — up to 12 top US breaking headlines, refreshed every 30 minutes; no API key required |
 | **NFL Schedule** | Next 7 days of NFL games: teams, kickoff time, live scores, final scores |
-| **NBA Schedule** | Next 7 days of LA Lakers & Golden State Warriors games: tip-off time, live quarter scores, final scores, postponements; team-color accent strip per row |
-| **Joke Screen** | Random kids joke from API League; two-part jokes show setup (white) + punchline (gold); one-liners fill the full panel; refreshed every 3 hours |
+| **NBA Schedule** | Next 7 days of games for any two configurable NBA teams: tip-off time, live quarter scores, final scores, postponements; team-color accent strip per row |
+| **Joke Screen** | Random dad joke from RapidAPI Dad Jokes; two-part jokes show setup (white) + punchline (gold); refreshed every 3 hours |
 | **Auto Night Dim** | Display automatically dims at sunset and brightens at sunrise; configurable brightness |
-| **Touch Setup** | On-screen keyboard for WiFi credentials and ZIP code; WiFi network scanner; brightness slider |
+| **Touch Setup** | Two-tab setup screen: Tab 1 — WiFi credentials, ZIP code, WiFi scanner, brightness slider; Tab 2 — configurable stock symbols/names and NBA team selection |
 | **Multi-screen** | Setup · Clock · News · Stocks · Daily Forecast · Hourly · NFL · NBA · Joke; tap nav bar to switch |
-| **Persistent settings** | WiFi + ZIP + night brightness stored in NVS flash; auto-reconnects on boot |
+| **Persistent settings** | WiFi + ZIP + night brightness + stock symbols + NBA team IDs stored in NVS flash; auto-reconnects on boot |
 
 ---
 
@@ -119,12 +119,19 @@ Wire.begin(SDA=15, SCL=16) → Wire.setClock(400 kHz) → GT911.begin(0x5D) → 
 ## Screens
 
 ### Setup Screen
-Shown on first boot (or when credentials are missing). Enter your WiFi SSID, password, and 5-digit US ZIP code using the on-screen keyboard.
+Shown on first boot (or when credentials are missing). The setup screen has two tabs:
 
+**Tab 1 — WiFi & Location**
+- Enter your WiFi SSID, password, and 5-digit US ZIP code using the on-screen keyboard.
 - Tap **⟳ Scan** to automatically scan for nearby WiFi networks. A scrollable popup lists all found networks with signal strength and security status — tap any row to fill in the SSID automatically.
 - Tap **Connect & Save** to connect and begin fetching data.
+- The **Night Brightness** slider (10–100%) sets how dim the display becomes between sunset and sunrise.
 
-The **Night Brightness** slider (10–100%) sets how dim the display becomes between sunset and sunrise. Settings are remembered across reboots.
+**Tab 2 — Stocks & Teams**
+- Six stock rows, each with a **Symbol** field (Yahoo Finance ticker, e.g. `^GSPC`) and a **Name** field (display label, e.g. `S&P 500`). Tap any field to edit — changes are saved to NVS immediately on defocus.
+- Two **NBA Team** dropdowns listing all 30 NBA teams alphabetically. Select any two teams; the NBA screen shows their combined schedule. Changes are saved instantly.
+
+All settings are remembered across reboots via NVS flash.
 
 ### Clock Screen (default)
 ```
@@ -164,7 +171,7 @@ The buzzer only sounds when the active alert set changes — repeated 5-minute f
 Full scrollable list of up to 12 breaking headlines from the **Google News RSS** feed (`https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en`). No API key required. Headlines are the current top US stories across all topics. Refreshed every 30 minutes.
 
 ### Stocks Screen
-3×2 card grid with detailed market info for each of the 6 symbols (S&P 500, DOW, VYMI, VYM, Gold, Silver), including absolute price change, percentage change, and market state (Open / Pre-market / After-hours / Closed).
+3×2 card grid with detailed market info for each of the 6 configurable symbols, including absolute price change, percentage change, and market state (Open / Pre-market / After-hours / Closed). Default symbols are S&P 500, DOW, VYMI, VYM, Gold, Silver — change any of them via **Setup → Tab 2**.
 
 Gold and Silver use Yahoo Finance COMEX front-month futures tickers (`GC=F`, `SI=F`) — the same prices shown on Yahoo Finance's gold/silver quote pages.
 
@@ -207,13 +214,13 @@ Shows NFL games scheduled over the next 7 days, grouped by date. Scrollable when
 > **Requires a free API key** — see [API Key Setup](#api-key-setup) below.
 
 ### NBA Screen
-Shows LA Lakers and Golden State Warriors games scheduled over the next 7 days, grouped by date. Scrollable.
+Shows games for your two configured NBA teams over the next 7 days, grouped by date. Scrollable. Select any two teams via **Setup → Tab 2** (defaults: LA Lakers and Golden State Warriors).
 
 - **Upcoming games** — tip-off time shown in gold (local time)
 - **In-progress games** — live score + period shown in green (e.g. `98-87 3Q`)
 - **Final games** — score + "Final" shown in grey
 - **Postponed games** — "Postponed" shown in orange
-- **Team accent strip** — 4px left border: Lakers purple for LAL games, Warriors blue for GSW games, gold for Lakers vs. Warriors matchups
+- **Team accent strip** — 4px left border colored per team; gold when both configured teams play each other
 
 > **Requires the same Ball Don't Lie API key as NFL** — see [API Key Setup](#api-key-setup) below.
 
@@ -235,9 +242,9 @@ Shows LA Lakers and Golden State Warriors games scheduled over the next 7 days, 
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-Displays a random joke from the [API League Random Joke API](https://apileague.com/apis/random-joke-api/) filtered to `kids` jokes. Two-part jokes (knock-knock, Q&A) show the setup in white at the top and the punchline in gold at the bottom. One-liners expand to fill the full content area. The "Updated" timestamp in the header ages from grey → orange → red to indicate staleness. Refreshes every 3 hours. No PSRAM usage — text only.
+Displays a random dad joke from the [RapidAPI Dad Jokes API](https://rapidapi.com/KegenGuyll/api/dad-jokes). Two-part jokes show the setup in white at the top and the punchline in gold at the bottom. The "Updated" timestamp in the header ages from grey → orange → red to indicate staleness. Refreshes every 3 hours. No PSRAM usage — text only.
 
-> **Requires a free API League key** — see [API Key Setup](#api-key-setup) below.
+> **Requires a free RapidAPI key with the Dad Jokes API subscribed** — see [API Key Setup](#api-key-setup) below.
 
 ---
 
@@ -252,7 +259,7 @@ The News screen fetches the [Google News RSS](https://news.google.com/rss?hl=en-
 Both the NFL and NBA screens use the [Ball Don't Lie](https://www.balldontlie.io) API (free tier, no cost) with the **same single API key**.
 
 - **NFL endpoint:** `GET https://api.balldontlie.io/nfl/v1/games` — filtered by date (next 7 days)
-- **NBA endpoint:** `GET https://api.balldontlie.io/v1/games` — filtered by `team_ids[]=14` (Lakers) and `team_ids[]=10` (Warriors), plus `start_date`/`end_date`
+- **NBA endpoint:** `GET https://api.balldontlie.io/v1/games` — filtered by `team_ids[]=<team1>&team_ids[]=<team2>` (configurable via Setup), plus `start_date`/`end_date`
 
 1. Register at [balldontlie.io](https://www.balldontlie.io) and copy your API key
 2. Paste it into `include/secrets.h`:
@@ -279,21 +286,23 @@ The Forecast screen's ISS strip uses the [N2YO](https://www.n2yo.com) satellite 
 
 Without a key the ISS strip shows a registration reminder.
 
-### Joke — API League
+### Joke — RapidAPI Dad Jokes
 
-The Joke screen uses the [API League Random Joke API](https://apileague.com/apis/random-joke-api/) (free tier: 50 tokens/day). At the 3-hour refresh interval the clock uses ≤ 8 requests/day, well within the free limit.
+The Joke screen uses the [Dad Jokes API](https://rapidapi.com/KegenGuyll/api/dad-jokes) on RapidAPI (free tier). At the 3-hour refresh interval the clock uses ≤ 8 requests/day.
 
-- **Endpoint:** `GET https://api.apileague.com/retrieve-random-joke?include-tags=kids&min-rating=0.5&max-length=250&api-key=KEY`
-- Two-part jokes return `{setup, punchline}`; one-liners return `{joke}`
-- Tag filter `kids` is applied — family-friendly content; min rating 0.5; max length 250 characters
+- **Endpoint:** `GET https://dad-jokes.p.rapidapi.com/random/joke`
+- **Required headers:** `x-rapidapi-host: dad-jokes.p.rapidapi.com` and `x-rapidapi-key: YOUR_KEY`
+- Response format: `{"body":[{"setup":"...","punchline":"..."}],"success":true}`
+- All jokes are two-part (setup + punchline)
 
-1. Register at [apileague.com](https://apileague.com)
-2. Copy your API key from the dashboard
-3. Paste it into `include/secrets.h`:
+1. Create a free account at [rapidapi.com](https://rapidapi.com)
+2. Search for **"Dad Jokes"** and subscribe to the free tier
+3. Copy your API key from the RapidAPI dashboard
+4. Paste it into `include/secrets.h`:
    ```cpp
-   #define APILEAGUE_API_KEY  "your_key_here"
+   #define RAPIDAPI_JOKE_KEY  "your_key_here"
    ```
-4. Re-build and flash the firmware
+5. Re-build and flash the firmware
 
 `include/secrets.h` is listed in `.gitignore` — your keys will not be committed if you use git.
 
@@ -397,8 +406,8 @@ The News screen fetches `https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en` 
 | ISS pass times | [N2YO](https://www.n2yo.com) visual passes API | **Free key** | HTTPS; NORAD ID 25544 (ISS) |
 | Weather alerts | [NWS API](https://api.weather.gov/alerts/active) | No | HTTPS, US only; uses lat/lon from geocode |
 | NFL schedule & scores | [Ball Don't Lie](https://www.balldontlie.io) | **Free key** | HTTPS; `/nfl/v1/games` filtered by date |
-| NBA schedule & scores (Lakers + Warriors) | [Ball Don't Lie](https://www.balldontlie.io) | **Same key as NFL** | HTTPS; `/v1/games` filtered by `team_ids[]=14,10` + date range |
-| Random joke | [API League](https://apileague.com/apis/random-joke-api/) | **Free key** | HTTPS; `include-tags=kids`; `min-rating=0.5`; `max-length=250`; two-part or one-liner |
+| NBA schedule & scores (2 configurable teams) | [Ball Don't Lie](https://www.balldontlie.io) | **Same key as NFL** | HTTPS; `/v1/games` filtered by configurable `team_ids[]` + date range |
+| Random joke | [RapidAPI Dad Jokes](https://rapidapi.com/KegenGuyll/api/dad-jokes) | **Free RapidAPI key** | HTTPS; always two-part (setup + punchline) |
 
 ### Update Intervals
 
@@ -413,7 +422,7 @@ The News screen fetches `https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en` 
 | BM8563 RTC updated | After each NTP sync (every 1 hour) |
 | ISS pass times | Every 6 hours |
 | NFL schedule | Every 1 hour |
-| NBA schedule (Lakers & Warriors) | Every 1 hour |
+| NBA schedule (2 configurable teams) | Every 1 hour |
 | Joke | Every 3 hours |
 | NTP re-sync | Every 1 hour |
 
@@ -450,7 +459,7 @@ cd smart-clock/SmartClockProject
 # Add your API keys to include/secrets.h:
 #   BALLDONTLIE_API_KEY  — Ball Don't Lie NFL/NBA API (balldontlie.io)
 #   N2YO_API_KEY         — ISS pass predictions       (n2yo.com)
-#   APILEAGUE_API_KEY    — Random joke                (apileague.com)
+#   RAPIDAPI_JOKE_KEY    — RapidAPI Dad Jokes          (rapidapi.com)
 
 # Full clean build (required on first build or after sdkconfig.defaults changes)
 pio run --target clean
@@ -503,7 +512,7 @@ SmartClockProject/
 │
 └── src/
     ├── main.cpp             # setup(), loop(), WiFi, NTP, fetch orchestration, BM8563 RTC sync
-    ├── prefs_mgr.h          # NVS persistence (WiFi, ZIP, city, UTC offset, brightness)
+    ├── prefs_mgr.h          # NVS persistence (WiFi, ZIP, city, UTC offset, brightness, stock symbols/names, NBA team IDs)
     ├── rtc_bm8563.h         # BM8563 hardware RTC driver (I2C 0x51, battery-backed, PCF8563-compatible)
     ├── backlight.h          # Software brightness (bswap16-aware RGB565 pixel scaling in disp_flush)
     ├── buzzer.h             # Piezo buzzer via STC8H I2C 0x30 (0xF6=ON, 0xF7=OFF, buzzer_beep())
@@ -515,8 +524,8 @@ SmartClockProject/
     ├── stock_api.h          # Yahoo Finance chart API — one HTTPS request per symbol
     ├── nfl_api.h            # Ball Don't Lie NFL games fetch & parser
     ├── nba_api.h            # Ball Don't Lie NBA games fetch & parser (Lakers + Warriors)
-    ├── joke_api.h           # API League random joke — fetch & parse setup/punchline/one-liner
-    ├── ui_setup.h           # Setup screen: keyboard, WiFi scan popup, brightness slider
+    ├── joke_api.h           # RapidAPI Dad Jokes — fetch & parse setup/punchline
+    ├── ui_setup.h           # Setup screen: two tabs — (1) WiFi/ZIP/brightness, (2) configurable stocks & NBA teams
     ├── ui_main.h            # Main clock screen (weather + 6-stock market panel + UTC)
     │                        #   also defines _create_nav_bar() shared by all screens
     ├── ui_news.h            # Full news list screen
@@ -536,12 +545,12 @@ SmartClockProject/
 All tunable constants live in [`include/config.h`](include/config.h):
 
 ```cpp
-// Stock symbols (Yahoo Finance; ^ → %5E, = → %3D for URL encoding)
+// Stock symbols — compile-time defaults (overridden at runtime via Setup → Tab 2 → NVS)
 #define STOCK_COUNT  6
-static const char* STOCK_SYMBOLS[STOCK_COUNT] = {
+static const char* STOCK_SYMBOLS_DEFAULT[STOCK_COUNT] = {
     "^GSPC", "^DJI", "VYMI", "VYM", "GC=F", "SI=F"
 };
-static const char* STOCK_DISPLAY_NAMES[STOCK_COUNT] = {
+static const char* STOCK_NAMES_DEFAULT[STOCK_COUNT] = {
     "S&P 500", "DOW JONES", "VYMI", "VYM", "GOLD", "SILVER"
 };
 
@@ -593,7 +602,7 @@ static const char* STOCK_DISPLAY_NAMES[STOCK_COUNT] = {
 | NFL game times wrong | Timezone mismatch | Weather fetch must complete first to set UTC offset |
 | NBA shows setup reminder | BDL API key not set | Same key used for both NFL and NBA; add key and re-flash |
 | NBA shows no games | Off-season or no upcoming games | NBA regular season runs Oct–Jun; returns empty list in off-season |
-| Joke screen shows "Loading joke…" | Key not set or fetch failed | Add `APILEAGUE_API_KEY` to `secrets.h` and re-flash; check `[JOKE]` serial log |
+| Joke screen shows "Loading joke…" | Key not set, not subscribed, or fetch failed | Add `RAPIDAPI_JOKE_KEY` to `secrets.h`, subscribe to Dad Jokes on RapidAPI, and re-flash; check `[JOKE]` serial log |
 | NBA game times wrong | Timezone mismatch | Same as NFL — weather fetch sets UTC offset |
 | SRAM alloc failed on boot | Insufficient free internal SRAM | Check serial; `[LVGL] SRAM allocation failed` |
 | WiFi scan finds no networks | Mode conflict | `on_scan_networks()` sets `WIFI_STA` before scan; ensure no concurrent mode change |
@@ -631,14 +640,13 @@ Enable verbose serial output by opening a monitor at **115200 baud** (`pio devic
 - **Moon phase accuracy** — Accurate to ±1 day; sufficient for display purposes.
 - **NFL during off-season** — BDL returns zero games roughly March–August.
 - **NBA during off-season** — BDL returns zero games roughly July–September. The screen shows "No Lakers or Warriors games scheduled" gracefully.
-- **NBA team filter** — The screen shows all Lakers (ID 14) and Warriors (ID 10) games, including games against other opponents. A Lakers vs. Warriors matchup appears as a single row with a gold accent strip.
+- **NBA team filter** — The screen shows all games for your two configured teams (default: Lakers ID 14 and Warriors ID 10), including games against other opponents. A matchup between your two configured teams appears as a single row with a gold accent strip. Change teams anytime via Setup → Tab 2.
 - **WiFi scan blocks UI** — `WiFi.scanNetworks()` is synchronous (~2 seconds). Acceptable for one-time setup.
 - **Stock fetches block UI briefly** — 6 HTTP requests over a single shared TLS session (HTTP/1.1 keep-alive); only 1 TLS handshake per batch instead of 6. Occurs only every 5 minutes.
 - **RTC battery** — The BM8563's backup battery maintains time when the board is unpowered. If the battery is depleted, the VL flag is set and the driver falls back to NTP sync on next WiFi connection.
 - **Panel_RGB DMA / jitter** — Three root causes fully diagnosed and fixed: D-cache burst (per-scanline flush), WiFi/LwIP PSRAM contention (`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096`), and ArduinoJson heap in PSRAM (`static StaticJsonDocument`). See [Display Jitter Troubleshooting](#display-jitter-troubleshooting).
 - **Google News RSS locale** — The feed is fixed to `en-US`. To target a different country or language, change the `hl=`, `gl=`, and `ceid=` parameters in `GOOGLE_NEWS_RSS` in `src/news_api.h`.
-- **Joke API rate limit** — The API League free tier provides 50 tokens/day. At the 3-hour interval the clock uses 8 requests/day, well within the free limit.
-- **Joke tag filter** — Only `include-tags=kids` is applied. Combining multiple tags uses an AND filter — the intersection may be empty and return HTTP 400.
+- **Joke API** — Uses RapidAPI Dad Jokes (free tier). All jokes are two-part (setup + punchline). Requires a free RapidAPI account and subscribing to the Dad Jokes API separately from the key itself.
 
 ---
 

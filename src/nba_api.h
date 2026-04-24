@@ -57,7 +57,7 @@ static time_t _nba_iso_to_epoch(const char* iso, int utc_offset_sec) {
     return mktime(&t) + (time_t)utc_offset_sec;
 }
 
-static bool fetchNba(NbaData& nd, int utc_offset_sec) {
+static bool fetchNba(NbaData& nd, int utc_offset_sec, int team1_id, int team2_id) {
     nd.count = 0;
     nd.valid = false;
 
@@ -83,19 +83,18 @@ static bool fetchNba(NbaData& nd, int utc_offset_sec) {
     strftime(end_buf, sizeof(end_buf), "%Y-%m-%d", &end_tm);
 
     // ── Build URL ─────────────────────────────────────────────────────────
-    String url = String(BALLDONTLIE_NBA_BASE)
-               + "?per_page=100"
-               + "&team_ids[]=14&team_ids[]=10"
-               + "&start_date=" + start_buf
-               + "&end_date="   + end_buf;
-    Serial.printf("[NBA] URL: %s\n", url.c_str());
+    char url[256];
+    snprintf(url, sizeof(url),
+             "%s?per_page=100&team_ids[]=%d&team_ids[]=%d&start_date=%s&end_date=%s",
+             BALLDONTLIE_NBA_BASE, team1_id, team2_id, start_buf, end_buf);
+    Serial.printf("[NBA] URL: %s\n", url);
 
     // ── HTTP request ───────────────────────────────────────────────────────
     WiFiClientSecure client;
     client.setInsecure();
 
     HTTPClient http;
-    http.begin(client, url);
+    http.begin(client, (const char*)url);
     http.setTimeout(15000);
     http.addHeader("Authorization", BALLDONTLIE_API_KEY);
 

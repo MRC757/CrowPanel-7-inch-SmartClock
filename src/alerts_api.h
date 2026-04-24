@@ -3,10 +3,11 @@
 // alerts_api.h — Active weather alerts via NWS (api.weather.gov)
 //
 // Endpoint: https://api.weather.gov/alerts/active?point={lat},{lon}
-// Free, no key, HTTPS, US only. Returns GeoJSON FeatureCollection.
-// Uses lat/lon already stored in g_weather from the geocode step.
+// Free, no key, HTTPS, US only.
 //
-// The NWS response can be large; a tight filter keeps the parsed doc small.
+// SSL fix: _alerts_client is a file-scope static that persists across calls.
+// On reconnect, mbedtls_ssl_session_reset() is used instead of
+// mbedtls_ssl_setup(), avoiding the alloc/free cycle that fragments SRAM.
 // ─────────────────────────────────────────────────────────────────────────────
 #include <Arduino.h>
 #include <WiFiClientSecure.h>
@@ -27,24 +28,32 @@ struct AlertsData {
     bool      valid;     // true after at least one successful fetch
 };
 
+// Persistent SSL client — keeps TLS context alive between 5-minute fetches.
+static WiFiClientSecure _alerts_client;
+static bool             _alerts_client_ready = false;
+
 static bool fetchAlerts(float lat, float lon, AlertsData& ad) {
     char url[96];
     snprintf(url, sizeof(url), "https://api.weather.gov/alerts/active?point=%.4f,%.4f", lat, lon);
 
-    // Retry loop: on SSL failure (-1), tear down and retry with a fresh client.
-    // The WiFiClientSecure must outlive http.getStream(), so both are scoped here.
-    WiFiClientSecure client;
+    if (!_alerts_client_ready) {
+        _alerts_client.setInsecure();
+        _alerts_client_ready = true;
+    }
+
+    // Retry loop: on SSL failure (-1), stop client and retry with a fresh handshake.
+    // First attempt reuses the existing TLS session (or reconnects via session_reset
+    // if NWS has closed the connection) — no context reallocation either way.
     HTTPClient http;
     int code = 0;
 
     for (int attempt = 0; attempt < 2; attempt++) {
         if (attempt > 0) {
             Serial.println("[ALERTS] retrying after 500 ms...");
+            _alerts_client.stop();   // reset on retry — clean slate for fresh handshake
             delay(500);
         }
-        client.stop();           // clean slate for each attempt
-        client.setInsecure();    // NWS cert rotates; setInsecure is acceptable here
-        http.begin(client, url);
+        http.begin(_alerts_client, url);
         http.setTimeout(15000);
         http.addHeader("User-Agent", "SmartClock/1.0 ESP32");
         http.addHeader("Accept",     "application/geo+json");
@@ -70,18 +79,16 @@ static bool fetchAlerts(float lat, float lon, AlertsData& ad) {
         return false;
     }
 
-    // Filter: keep only event, headline, severity from each feature.
-    // ArduinoJson 6: [0] on an array in a filter applies to ALL elements.
     StaticJsonDocument<256> filter;
     filter["features"][0]["properties"]["event"]    = true;
     filter["features"][0]["properties"]["headline"] = true;
     filter["features"][0]["properties"]["severity"] = true;
 
-    // static → BSS segment (internal SRAM), not heap/PSRAM.
     static StaticJsonDocument<4096> doc; doc.clear();
     DeserializationError err = deserializeJson(doc, http.getStream(),
                                                DeserializationOption::Filter(filter));
     http.end();
+    // Keep _alerts_client alive for next fetch — avoids mbedtls_ssl_setup() on reconnect.
 
     if (err) {
         Serial.printf("[ALERTS] JSON err: %s\n", err.c_str());
@@ -101,7 +108,6 @@ static bool fetchAlerts(float lat, float lon, AlertsData& ad) {
             strncpy(ad.alerts[ad.count].headline, props["headline"] | "",        127);
             strncpy(ad.alerts[ad.count].severity, props["severity"] | "Unknown", 11);
 
-            // Null-terminate in case of truncation
             ad.alerts[ad.count].event[47]    = '\0';
             ad.alerts[ad.count].headline[127] = '\0';
             ad.alerts[ad.count].severity[11]  = '\0';
