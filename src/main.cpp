@@ -5,7 +5,7 @@
 //   1. Hardware init (I2C @ 400 kHz, backlight via STC8H MCU, display, GT911 touch)
 //   2. LVGL init + register display/touch drivers
 //   3. Build all screens (Setup, Clock, News, Stocks, Forecast, Hourly, NFL, NBA, Joke)
-//   4. Load NVS preferences
+//   4. Load NVS preferences (WiFi, ZIP, stock symbols/names, NBA team IDs)
 //      - If WiFi credentials exist  → try connecting, then go to Clock screen
 //      - Otherwise                  → show Setup screen
 //   5. Main loop: lv_timer_handler + periodic data fetches
@@ -358,7 +358,7 @@ static void do_stocks_fetch() {
     recover_ssl_heap();          // proactive: cycle WiFi if SRAM below 70 KB threshold
     if (!wifi_connected) return;
     Serial.println("[STOCKS] Fetching stocks...");
-    if (!fetchStocks(g_stocks)) {
+    if (!fetchStocks(g_stocks, g_prefs.stock_symbols, g_prefs.stock_names)) {
         // All 6 symbols failed — SSL alloc failure due to SRAM heap fragmentation.
         // WiFi cycling does NOT defragment SRAM (mbedTLS cert-parse fragments persist
         // across connect/disconnect cycles).  Try one WiFi cycle as a cheap first
@@ -373,7 +373,7 @@ static void do_stocks_fetch() {
         if (wifi_connect(g_prefs.wifi_ssid, g_prefs.wifi_pass)) {
             uint32_t post_sram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
             Serial.printf("[SSL] Reconnected — free SRAM now %u B\n", post_sram);
-            if (!fetchStocks(g_stocks)) {
+            if (!fetchStocks(g_stocks, g_prefs.stock_symbols, g_prefs.stock_names)) {
                 if (post_sram < 65000) {
                     // SRAM fragmented beyond WiFi-cycle recovery; restart is required.
                     Serial.println("[SSL] Heap unrecoverable — restarting in 3 s");
@@ -449,7 +449,7 @@ static void do_nfl_fetch() {
 static void do_nba_fetch() {
     if (!wifi_connected) return;
     Serial.println("[NBA] Fetching NBA schedule...");
-    if (fetchNba(g_nba, g_prefs.utc_offset_sec)) {
+    if (fetchNba(g_nba, g_prefs.utc_offset_sec, g_prefs.nba_team1_id, g_prefs.nba_team2_id)) {
         ui_nba_update(g_nba);
     }
     last_nba_ms = millis();
@@ -578,6 +578,22 @@ static void on_night_brightness_change(uint8_t pct) {
     g_prefs.night_brightness = pct;
     prefs_save_brightness(pct);
     check_auto_dim();  // apply immediately if currently in night hours
+}
+
+// Called when a stock symbol/name is changed on the setup screen.
+static void on_stock_changed(int idx, const char* sym, const char* name) {
+    strncpy(g_prefs.stock_symbols[idx], sym,  sizeof(g_prefs.stock_symbols[idx]) - 1);
+    strncpy(g_prefs.stock_names[idx],   name, sizeof(g_prefs.stock_names[idx])   - 1);
+    prefs_save_stock(idx, sym, name);
+    Serial.printf("[SETUP] Stock %d saved: %s (%s)\n", idx, sym, name);
+}
+
+// Called when either NBA team dropdown changes on the setup screen.
+static void on_teams_changed(int team1_id, int team2_id) {
+    g_prefs.nba_team1_id = team1_id;
+    g_prefs.nba_team2_id = team2_id;
+    prefs_save_nba_teams(team1_id, team2_id);
+    Serial.printf("[SETUP] NBA teams saved: %d / %d\n", team1_id, team2_id);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -725,7 +741,8 @@ void setup() {
 
     // ── 6. Build all screens ──────────────────────────────────────────────
     // (UI modules use global navigateTo() for nav-bar buttons)
-    scr_setup    = ui_setup_create(nullptr, on_setup_connect, on_night_brightness_change, on_scan_networks);
+    scr_setup    = ui_setup_create(nullptr, on_setup_connect, on_night_brightness_change,
+                                   on_scan_networks, on_stock_changed, on_teams_changed);
     scr_main     = ui_main_create();
     scr_news     = ui_news_create();
     scr_stocks   = ui_stocks_create();

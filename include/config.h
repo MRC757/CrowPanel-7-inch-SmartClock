@@ -22,7 +22,7 @@
 #define SCR_NFL      5
 #define SCR_HOURLY   6
 #define SCR_NBA      7
-#define SCR_JOKE     8   // Random joke (API League; requires APILEAGUE_API_KEY)
+#define SCR_JOKE     8   // Random dad joke (RapidAPI; requires RAPIDAPI_JOKE_KEY)
 
 // ─── Data update intervals (milliseconds) ─────────────────────────────────────
 #define WEATHER_UPDATE_MS   (15UL * 60 * 1000)        // 15 minutes
@@ -33,7 +33,7 @@
 #define ALERTS_UPDATE_MS    ( 5UL * 60 * 1000)        //  5 minutes (safety-critical)
 #define NFL_UPDATE_MS       (60UL * 60 * 1000)        //  1 hour
 #define NBA_UPDATE_MS       (60UL * 60 * 1000)        //  1 hour
-#define JOKE_UPDATE_MS      ( 3UL * 60 * 60 * 1000)  //  3 hours (API League free tier: 50 tokens/day)
+#define JOKE_UPDATE_MS      ( 3UL * 60 * 60 * 1000)  //  3 hours
 
 // ─── NTP ──────────────────────────────────────────────────────────────────────
 #define NTP_SERVER_1  "pool.ntp.org"
@@ -41,12 +41,13 @@
 
 // ─── Stock definitions ────────────────────────────────────────────────────────
 #define STOCK_COUNT  6
-// Yahoo Finance symbols (per-symbol chart API; ^ → %5E, = → %3D for URL encoding)
-static const char* STOCK_DISPLAY_NAMES[STOCK_COUNT] = {
-    "S&P 500", "DOW JONES", "VYMI", "VYM", "GOLD", "SILVER"
-};
-static const char* STOCK_SYMBOLS[STOCK_COUNT] = {
+// Default Yahoo Finance symbols — used only to pre-populate NVS on first boot.
+// Actual symbols used at runtime come from g_prefs.stock_symbols / stock_names.
+static const char* STOCK_SYMBOLS_DEFAULT[STOCK_COUNT] = {
     "^GSPC", "^DJI", "VYMI", "VYM", "GC=F", "SI=F"
+};
+static const char* STOCK_NAMES_DEFAULT[STOCK_COUNT] = {
+    "S&P 500", "DOW JONES", "VYMI", "VYM", "GOLD", "SILVER"
 };
 
 // ─── Google News RSS ──────────────────────────────────────────────────────────
@@ -61,8 +62,7 @@ static const char* STOCK_SYMBOLS[STOCK_COUNT] = {
 #define BALLDONTLIE_NFL_BASE  "https://api.balldontlie.io/nfl/v1/games"
 #define BALLDONTLIE_NBA_BASE  "https://api.balldontlie.io/v1/games"
 #define N2YO_PASSES_BASE      "https://api.n2yo.com/rest/v1/satellite/visualpasses/25544/"
-#define APILEAGUE_JOKE_BASE   "https://api.apileague.com/retrieve-random-joke"
-#define APILEAGUE_JOKE_TAGS   "kids"
+#define DAD_JOKES_URL   "https://dad-jokes.p.rapidapi.com/random/joke"
 
 // ─── Default timezone offset (seconds). Overwritten by Open-Meteo response. ──
 #define DEFAULT_UTC_OFFSET_SEC  -18000   // UTC-5 (US Eastern Standard Time)

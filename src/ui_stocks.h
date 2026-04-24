@@ -43,14 +43,14 @@ static StockCard make_stock_card(lv_obj_t* parent, int x, int y,
 
     // Display name (e.g. "S&P 500")
     c.lbl_name = lv_label_create(c.card);
-    lv_label_set_text(c.lbl_name, STOCK_DISPLAY_NAMES[idx]);
+    lv_label_set_text(c.lbl_name, STOCK_NAMES_DEFAULT[idx]);
     lv_obj_set_style_text_font(c.lbl_name, &lv_font_montserrat_18, 0);
     lv_obj_set_style_text_color(c.lbl_name, lv_color_hex(0x4fc3f7), 0);
     lv_obj_set_pos(c.lbl_name, 0, 0);
 
     // Symbol (e.g. "^GSPC")
     c.lbl_symbol = lv_label_create(c.card);
-    lv_label_set_text(c.lbl_symbol, STOCK_SYMBOLS[idx]);
+    lv_label_set_text(c.lbl_symbol, STOCK_SYMBOLS_DEFAULT[idx]);
     lv_obj_set_style_text_font(c.lbl_symbol, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(c.lbl_symbol, lv_color_hex(0x9e9e9e), 0);
     lv_obj_set_pos(c.lbl_symbol, 0, 26);
