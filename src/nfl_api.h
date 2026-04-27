@@ -104,14 +104,13 @@ static bool fetchNfl(NflData& nd, int utc_offset_sec) {
     Serial.printf("[NFL] HTTP %d  size=%d\n", code, http.getSize());
     if (code != 200) {
         http.end();
+        client.stop();
         return false;
     }
 
     String body = http.getString();
     http.end();
-#if SMART_CLOCK_DEBUG
-    Serial.printf("[NFL] body (first 300): %.300s\n", body.c_str());
-#endif
+    client.stop();
 
     // ── Parse JSON (filtered to keep only needed fields) ───────────────────
     // 512 bytes — sized generously; undersizing silently corrupts the filter

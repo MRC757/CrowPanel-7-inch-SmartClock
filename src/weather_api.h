@@ -104,28 +104,37 @@ static void _fmt_iso_time(const char* iso, char* buf, size_t sz) {
     }
 }
 
+// Persistent SSL client — one context reused for geocode + Open-Meteo fetches.
+// Avoids mbedtls_ssl_setup() on every hourly cycle; uses session_reset instead.
+static WiFiClientSecure _weather_client;
+static bool             _weather_client_ready = false;
+
 // ─── Step 1: ZIP code → lat, lon, city name ───────────────────────────────
 // Returns true on success. On failure, leaves WeatherData unchanged.
 static bool fetchGeocode(const char* zip, WeatherData& wd) {
-    WiFiClientSecure client;
-    client.setInsecure();  // Skip cert verification (public data, no risk)
+    if (!_weather_client_ready) {
+        _weather_client.setInsecure();
+        _weather_client_ready = true;
+    }
 
     HTTPClient http;
     String url = String(ZIPPOPOTAM_BASE) + zip;
-    http.begin(client, url);
+    http.begin(_weather_client, url);
     http.setTimeout(8000);
     int code = http.GET();
 
     if (code != 200) {
         Serial.printf("[GEO] HTTP %d for zip %s\n", code, zip);
         http.end();
+        _weather_client.stop();
         return false;
     }
 
-    // Response is ~200 bytes; a small document is fine.
-    StaticJsonDocument<512> doc;
-    DeserializationError err = deserializeJson(doc, http.getString());
+    static StaticJsonDocument<512> doc;
+    doc.clear();
+    DeserializationError err = deserializeJson(doc, http.getStream());
     http.end();
+    // Keep _weather_client alive for fetchOpenMeteo
 
     if (err) {
         Serial.printf("[GEO] JSON err: %s\n", err.c_str());
@@ -152,8 +161,10 @@ static bool fetchGeocode(const char* zip, WeatherData& wd) {
 
 // ─── Step 2: lat/lon → weather ────────────────────────────────────────────
 static bool fetchOpenMeteo(WeatherData& wd) {
-    WiFiClientSecure client;
-    client.setInsecure();
+    if (!_weather_client_ready) {
+        _weather_client.setInsecure();
+        _weather_client_ready = true;
+    }
 
     // Request current weather + 5-day daily forecast.
     // timezone=auto lets Open-Meteo pick the right timezone from coordinates.
@@ -172,20 +183,23 @@ static bool fetchOpenMeteo(WeatherData& wd) {
         + "&forecast_hours=72";
 
     HTTPClient http;
-    http.begin(client, url);
+    http.begin(_weather_client, url);
     http.setTimeout(10000);
     int code = http.GET();
 
     if (code != 200) {
         Serial.printf("[WX] HTTP %d\n", code);
         http.end();
+        _weather_client.stop();
         return false;
     }
 
-    // Read body into String first — more reliable than getStream() + filter
-    // for WiFiClientSecure where the TLS layer may deliver data in chunks.
+    // Buffer full body before parsing — WiFiClientSecure delivers TLS data in
+    // 16 KB records; ArduinoJson's streaming reader sees available()==0 between
+    // records and stops early, producing silent zero-valued fields.
     String body = http.getString();
     http.end();
+    // Keep _weather_client alive — next hourly call reuses the TLS context.
 
     if (body.length() < 50) {
         Serial.printf("[WX] Response too short (%u bytes)\n", body.length());
