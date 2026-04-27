@@ -73,7 +73,6 @@ static void _create_nav_bar(lv_obj_t* scr, int active_screen) {
         { LV_SYMBOL_REFRESH  " Hourly",  SCR_HOURLY   },
         { LV_SYMBOL_PLAY     " NFL",     SCR_NFL      },
         { LV_SYMBOL_LOOP     " NBA",     SCR_NBA      },
-        { LV_SYMBOL_CHARGE   " Joke",    SCR_JOKE     },
     };
     int n = (int)(sizeof(TABS) / sizeof(TABS[0]));
     int btn_w = SCREEN_WIDTH / n;

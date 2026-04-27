@@ -22,7 +22,6 @@
 #define SCR_NFL      5
 #define SCR_HOURLY   6
 #define SCR_NBA      7
-#define SCR_JOKE     8   // Random dad joke (RapidAPI; requires RAPIDAPI_JOKE_KEY)
 
 // ─── Data update intervals (milliseconds) ─────────────────────────────────────
 #define WEATHER_UPDATE_MS   (60UL * 60 * 1000)        //  1 hour
@@ -33,7 +32,6 @@
 #define ALERTS_UPDATE_MS    ( 5UL * 60 * 1000)        //  5 minutes (safety-critical)
 #define NFL_UPDATE_MS       (60UL * 60 * 1000)        //  1 hour
 #define NBA_UPDATE_MS       (60UL * 60 * 1000)        //  1 hour
-#define JOKE_UPDATE_MS      ( 3UL * 60 * 60 * 1000)  //  3 hours
 
 // ─── NTP ──────────────────────────────────────────────────────────────────────
 #define NTP_SERVER_1  "pool.ntp.org"
@@ -62,7 +60,6 @@ static const char* STOCK_NAMES_DEFAULT[STOCK_COUNT] = {
 #define BALLDONTLIE_NFL_BASE  "https://api.balldontlie.io/nfl/v1/games"
 #define BALLDONTLIE_NBA_BASE  "https://api.balldontlie.io/v1/games"
 #define N2YO_PASSES_BASE      "https://api.n2yo.com/rest/v1/satellite/visualpasses/25544/"
-#define DAD_JOKES_URL   "https://dad-jokes.p.rapidapi.com/random/joke"
 
 // ─── Default timezone offset (seconds). Overwritten by Open-Meteo response. ──
 #define DEFAULT_UTC_OFFSET_SEC  -18000   // UTC-5 (US Eastern Standard Time)
