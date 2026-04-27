@@ -284,9 +284,9 @@ inline void ui_forecast_update(const WeatherData& wd) {
 inline void ui_forecast_update_iss(const IssData& id) {
     if (!_fcast_iss_lbl) return;
 
-    if (!id.valid || id.count == 0) {
-        lv_label_set_text(_fcast_iss_lbl,
-            "ISS passes unavailable — register free at n2yo.com for pass times");
+    if (!id.valid) return;   // not yet fetched
+    if (id.count == 0) {
+        lv_label_set_text(_fcast_iss_lbl, "No visible passes in next 3 days");
         return;
     }
 
