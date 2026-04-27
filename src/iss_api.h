@@ -82,7 +82,9 @@ static bool fetchIss(float lat, float lon, IssData& id) {
     JsonArray passes = doc["passes"];
     if (passes.isNull() || passes.size() == 0) {
         Serial.println("[ISS] No visible passes in next 3 days");
-        return false;
+        id.valid = true;   // successful fetch, just no passes
+        id.count = 0;
+        return true;
     }
 
     id.count = 0;

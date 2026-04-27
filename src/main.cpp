@@ -387,9 +387,8 @@ static void do_iss_fetch() {
     esp_task_wdt_reset();
     if (!wifi_connected || g_weather.latitude == 0.0f) return;
     Serial.println("[ISS] Fetching visible pass times...");
-    if (fetchIss(g_weather.latitude, g_weather.longitude, g_iss)) {
-        ui_forecast_update_iss(g_iss);
-    }
+    fetchIss(g_weather.latitude, g_weather.longitude, g_iss);
+    ui_forecast_update_iss(g_iss);
     last_iss_ms = millis();
 }
 
