@@ -18,7 +18,6 @@
 //   NFL                      — every  1 hr   (Ball Don't Lie, free key required)
 //   NBA                      — every  1 hr   (Ball Don't Lie, same key as NFL)
 //   ISS pass times           — every  6 hr   (N2YO, free key required)
-//   Meme                     — every  3 hr   (API League, free key required)
 //   NTP re-sync              — every  1 hr
 // ─────────────────────────────────────────────────────────────────────────────
 #include <Arduino.h>
@@ -56,8 +55,6 @@
 #include "ui_nfl.h"
 #include "nba_api.h"
 #include "ui_nba.h"
-#include "joke_api.h"
-#include "ui_joke.h"
 
 // GT911 touch controller (TAMC_GT911 via Wire; SDA=15, SCL=16, no IRQ/RST pins)
 static TAMC_GT911 ts(I2C_SDA_PIN, I2C_SCL_PIN, -1, -1, SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -73,7 +70,6 @@ IssData     g_iss     = {};
 AlertsData  g_alerts  = {};
 NflData     g_nfl     = {};
 NbaData     g_nba     = {};
-JokeData    g_joke    = {};
 
 // Active LVGL screen objects
 static lv_obj_t* scr_setup    = nullptr;
@@ -84,7 +80,6 @@ static lv_obj_t* scr_forecast = nullptr;
 static lv_obj_t* scr_hourly   = nullptr;
 static lv_obj_t* scr_nfl      = nullptr;
 static lv_obj_t* scr_nba      = nullptr;
-static lv_obj_t* scr_joke     = nullptr;
 
 // Timing
 static unsigned long last_weather_ms   = 0;
@@ -95,7 +90,6 @@ static unsigned long last_iss_ms       = 0;
 static unsigned long last_alerts_ms    = 0;
 static unsigned long last_nfl_ms            = 0;
 static unsigned long last_nba_ms            = 0;
-static unsigned long last_joke_ms           = 0;
 static unsigned long last_dim_check_ms      = 0;  // auto-dim evaluation interval
 static unsigned long last_reconnect_ms      = 0;  // WiFi reconnect watchdog
 
@@ -215,10 +209,6 @@ void navigateTo(int screenId) {
         case SCR_NBA:
             target = scr_nba;
             ui_nba_tick();
-            break;
-        case SCR_JOKE:
-            target = scr_joke;
-            ui_joke_tick();
             break;
         default: return;
     }
@@ -463,29 +453,6 @@ static void do_nba_fetch() {
     last_nba_ms = millis();
 }
 
-static void do_joke_fetch() {
-    esp_task_wdt_reset();
-    if (!wifi_connected) return;
-    recover_ssl_heap();   // safety net for periodic calls when SRAM may be fragmented
-    if (!wifi_connected) return;
-
-    Serial.println("[JOKE] Fetching joke...");
-    if (!fetchJoke(g_joke)) {
-        Serial.println("[JOKE] Fetch failed");
-        last_joke_ms = millis();
-        if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < 65000) {
-            Serial.println("[JOKE] SRAM critically fragmented — restarting");
-            delay(500);
-            ESP.restart();
-        }
-        return;
-    }
-
-    ui_joke_update(g_joke.setup, g_joke.punchline);
-    last_joke_ms = millis();
-    Serial.println("[JOKE] Done");
-}
-
 // Performs the full first-load fetch sequence with LVGL yielding between calls.
 static void initial_fetch() {
     // After ESP.restart() (ESP_RST_SW), skip news + ISS/NFL/NBA to conserve SRAM.
@@ -506,7 +473,7 @@ static void initial_fetch() {
         // freshest (only 1 prior SSL handshake).  Each additional handshake before
         // stocks further fragments the SRAM heap, leaving the SHA DMA allocator
         // without a contiguous block when Yahoo drops keep-alive mid-batch.
-        // Joke / news / ISS / NFL / NBA are deferred to their periodic timers.
+        // News / ISS / NFL / NBA are deferred to their periodic timers.
         ui_setup_set_status("Fetching market data...", lv_color_hex(0x4fc3f7));
         lv_timer_handler(); delay(20);
         do_stocks_fetch();
@@ -514,17 +481,8 @@ static void initial_fetch() {
         ui_setup_set_status("Checking weather alerts...", lv_color_hex(0x4fc3f7));
         lv_timer_handler(); delay(20);
         do_alerts_fetch();
-
-        ui_setup_set_status("Loading joke...", lv_color_hex(0x4fc3f7));
-        lv_timer_handler(); delay(20);
-        do_joke_fetch();
     } else {
         // Normal (hardware) boot: full fetch sequence.
-        // Joke runs before news/stocks so it gets SRAM before those handshakes.
-        ui_setup_set_status("Loading joke...", lv_color_hex(0x4fc3f7));
-        lv_timer_handler(); delay(20);
-        do_joke_fetch();
-
         ui_setup_set_status("Fetching news...", lv_color_hex(0x4fc3f7));
         lv_timer_handler(); delay(20);
         do_news_fetch();
@@ -775,7 +733,6 @@ void setup() {
     scr_hourly   = ui_hourly_create();
     scr_nfl      = ui_nfl_create();
     scr_nba      = ui_nba_create();
-    scr_joke     = ui_joke_create();
     ui_alert_init();   // floating banner on lv_layer_top(), above all screens
 
     Serial.println("[UI] All screens created");
@@ -886,11 +843,6 @@ void loop() {
             do_nba_fetch();
         }
 
-        // Joke update (3 hours)
-        if (first_fetch_done && now - last_joke_ms >= JOKE_UPDATE_MS) {
-            do_joke_fetch();
-        }
-
         // Auto-dim: re-evaluate day/night brightness every minute
         if (first_fetch_done && now - last_dim_check_ms >= 60000UL) {
             check_auto_dim();
@@ -914,7 +866,6 @@ void loop() {
             if (now - last_alerts_ms  >= ALERTS_UPDATE_MS)  do_alerts_fetch();
             if (now - last_nfl_ms     >= NFL_UPDATE_MS)     do_nfl_fetch();
             if (now - last_nba_ms     >= NBA_UPDATE_MS)     do_nba_fetch();
-            if (now - last_joke_ms    >= JOKE_UPDATE_MS)    do_joke_fetch();
             // ISS is 6-hour; only refetch if genuinely stale
             if (now - last_iss_ms     >= ISS_UPDATE_MS)     do_iss_fetch();
         }
