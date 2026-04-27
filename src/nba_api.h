@@ -102,14 +102,13 @@ static bool fetchNba(NbaData& nd, int utc_offset_sec, int team1_id, int team2_id
     Serial.printf("[NBA] HTTP %d  size=%d\n", code, http.getSize());
     if (code != 200) {
         http.end();
+        client.stop();
         return false;
     }
 
     String body = http.getString();
     http.end();
-#if SMART_CLOCK_DEBUG
-    Serial.printf("[NBA] body (first 300): %.300s\n", body.c_str());
-#endif
+    client.stop();
 
     // ── Parse JSON (minimal filter: teams + dates only) ───────────────────
     StaticJsonDocument<256> filter;

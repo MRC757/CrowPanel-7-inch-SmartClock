@@ -13,6 +13,7 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <esp_task_wdt.h>
 #include "config.h"
 
 struct StockInfo {
@@ -65,6 +66,7 @@ static bool fetchStockChart(WiFiClientSecure& client, const char* symbol, StockI
 
     bool parsed = false;
     for (int attempt = 0; attempt < 2; attempt++) {
+        esp_task_wdt_reset();   // 6 symbols × up to 10 s each — keep WDT fed per attempt
         if (attempt > 0) {
             Serial.printf("[STOCKS] %s retrying after 500 ms...\n", symbol);
             client.stop();   // force fresh TLS handshake on retry

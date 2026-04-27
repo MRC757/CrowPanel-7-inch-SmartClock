@@ -11,7 +11,7 @@
 //   5. Main loop: lv_timer_handler + periodic data fetches
 //
 // Data refresh schedule (configurable in config.h):
-//   Weather + forecast + UV  — every 15 min  (Open-Meteo, no key)
+//   Weather + forecast + UV  — every  1 hr   (Open-Meteo, no key)
 //   Weather alerts           — every  5 min  (NWS, US only, no key)
 //   News                     — every 30 min  (Google News RSS, no key)
 //   Stocks                   — every  5 min  (Yahoo Finance chart API, no key)
@@ -23,6 +23,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 #include <Arduino.h>
 
+#include <esp_task_wdt.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -320,6 +321,7 @@ static void ntp_sync() {
 // Data fetch helpers — each yields to LVGL during the HTTP request
 // ─────────────────────────────────────────────────────────────────────────────
 static void do_weather_fetch(bool force_geocode = false) {
+    esp_task_wdt_reset();
     if (!wifi_connected || strlen(g_prefs.zip_code) == 0) return;
     Serial.println("[WX] Fetching weather...");
     if (fetchWeather(g_prefs.zip_code, g_weather, force_geocode)) {
@@ -344,6 +346,7 @@ static void do_weather_fetch(bool force_geocode = false) {
 }
 
 static void do_news_fetch() {
+    esp_task_wdt_reset();
     if (!wifi_connected) return;
     Serial.println("[NEWS] Fetching news...");
     fetchNews(g_news);
@@ -354,6 +357,7 @@ static void do_news_fetch() {
 }
 
 static void do_stocks_fetch() {
+    esp_task_wdt_reset();
     if (!wifi_connected) return;
     recover_ssl_heap();          // proactive: cycle WiFi if SRAM below 70 KB threshold
     if (!wifi_connected) return;
@@ -390,6 +394,7 @@ static void do_stocks_fetch() {
 }
 
 static void do_iss_fetch() {
+    esp_task_wdt_reset();
     if (!wifi_connected || g_weather.latitude == 0.0f) return;
     Serial.println("[ISS] Fetching visible pass times...");
     if (fetchIss(g_weather.latitude, g_weather.longitude, g_iss)) {
@@ -399,6 +404,7 @@ static void do_iss_fetch() {
 }
 
 static void do_alerts_fetch() {
+    esp_task_wdt_reset();
     if (!wifi_connected || g_weather.latitude == 0.0f) return;
     recover_ssl_heap();   // defensive: alerts runs right after stocks; guard against same fragmentation
     if (!wifi_connected) return;
@@ -438,6 +444,7 @@ static void do_alerts_fetch() {
 }
 
 static void do_nfl_fetch() {
+    esp_task_wdt_reset();
     if (!wifi_connected) return;
     Serial.println("[NFL] Fetching NFL schedule...");
     if (fetchNfl(g_nfl, g_prefs.utc_offset_sec)) {
@@ -447,6 +454,7 @@ static void do_nfl_fetch() {
 }
 
 static void do_nba_fetch() {
+    esp_task_wdt_reset();
     if (!wifi_connected) return;
     Serial.println("[NBA] Fetching NBA schedule...");
     if (fetchNba(g_nba, g_prefs.utc_offset_sec, g_prefs.nba_team1_id, g_prefs.nba_team2_id)) {
@@ -456,6 +464,7 @@ static void do_nba_fetch() {
 }
 
 static void do_joke_fetch() {
+    esp_task_wdt_reset();
     if (!wifi_connected) return;
     recover_ssl_heap();   // safety net for periodic calls when SRAM may be fragmented
     if (!wifi_connected) return;
@@ -678,6 +687,22 @@ void setup() {
     delay(200);
     Serial.println("\n[BOOT] Smart Clock starting...");
 
+    // ── Hardware task watchdog (30 s) ─────────────────────────────────────
+    // Resets the device if the main task hangs in a blocking HTTP call
+    // (e.g. server accepts the TCP connection but never sends a response).
+    // 30 s covers the longest legitimate fetch (news: 20 s HTTP timeout + margin).
+    // The WDT is fed at the top of loop() and before every blocking fetch.
+    {
+        const esp_task_wdt_config_t wdt_cfg = {
+            .timeout_ms    = 30000,
+            .idle_core_mask = 0,
+            .trigger_panic  = true,
+        };
+        if (esp_task_wdt_reconfigure(&wdt_cfg) != ESP_OK)
+            esp_task_wdt_init(&wdt_cfg);
+        esp_task_wdt_add(NULL);
+    }
+
     // ── 1. I2C bus + touch + backlight ───────────────────────────────────
     // Wire.begin() before gfx.init() — LovyanGFX no longer owns I2C (Touch_GT911
     // removed from LGFX_Driver.h), so there is no conflict.
@@ -806,6 +831,8 @@ void setup() {
 // Arduino loop()
 // ─────────────────────────────────────────────────────────────────────────────
 void loop() {
+    esp_task_wdt_reset();
+
     // ── LVGL processing (must run frequently for animations, touch, etc.) ──
     lv_timer_handler();
 

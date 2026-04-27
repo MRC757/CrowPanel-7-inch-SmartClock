@@ -59,11 +59,9 @@ static bool fetchIss(float lat, float lon, IssData& id) {
     if (code != 200) {
         Serial.printf("[ISS] HTTP %d\n", code);
         http.end();
+        client.stop();
         return false;
     }
-
-    String body = http.getString();
-    http.end();
 
     // Filter: only startUTC and duration from each pass
     StaticJsonDocument<96> filter;
@@ -72,8 +70,10 @@ static bool fetchIss(float lat, float lon, IssData& id) {
 
     // static → BSS segment (internal SRAM), not heap/PSRAM.
     static StaticJsonDocument<512> doc; doc.clear();
-    DeserializationError err = deserializeJson(doc, body,
+    DeserializationError err = deserializeJson(doc, http.getStream(),
                                                DeserializationOption::Filter(filter));
+    http.end();
+    client.stop();
     if (err) {
         Serial.printf("[ISS] JSON err: %s\n", err.c_str());
         return false;

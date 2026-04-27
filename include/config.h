@@ -25,7 +25,7 @@
 #define SCR_JOKE     8   // Random dad joke (RapidAPI; requires RAPIDAPI_JOKE_KEY)
 
 // ─── Data update intervals (milliseconds) ─────────────────────────────────────
-#define WEATHER_UPDATE_MS   (15UL * 60 * 1000)        // 15 minutes
+#define WEATHER_UPDATE_MS   (60UL * 60 * 1000)        //  1 hour
 #define NEWS_UPDATE_MS      (30UL * 60 * 1000)        // 30 minutes (Google News RSS — no rate limit)
 #define STOCKS_UPDATE_MS    ( 5UL * 60 * 1000)        //  5 minutes
 #define NTP_SYNC_MS         (60UL * 60 * 1000)        //  1 hour

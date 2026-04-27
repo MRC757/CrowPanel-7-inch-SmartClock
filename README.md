@@ -13,7 +13,7 @@ A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI 
 |---|---|
 | **Clock** | Local time & date + UTC time via NTP; auto-detects timezone from ZIP code |
 | **Hardware RTC** | BM8563 battery-backed RTC (I2C 0x51) keeps accurate time across power cycles; clock shows correct time instantly on boot |
-| **Weather** | Temperature, condition, feels-like, humidity, wind speed |
+| **Weather** | Temperature, condition, feels-like, humidity, wind speed; updated every hour |
 | **Sunrise & Sunset** | Today's rise/set times in the weather panel (from Open-Meteo, no extra request) |
 | **Moon Phase** | Current lunar phase calculated locally — no network request |
 | **5-Day Forecast** | Dedicated screen: daily high/low, condition, precipitation, UV index per day |
@@ -28,6 +28,7 @@ A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI 
 | **NBA Schedule** | Next 7 days of games for any two configurable NBA teams: tip-off time, live quarter scores, final scores, postponements; team-color accent strip per row |
 | **Joke Screen** | Random dad joke from RapidAPI Dad Jokes; two-part jokes show setup (white) + punchline (gold); refreshed every 3 hours |
 | **Auto Night Dim** | Display automatically dims at sunset and brightens at sunrise; configurable brightness |
+| **Hardware Watchdog** | 30-second ESP32 task watchdog resets the device if the main loop hangs in a stalled HTTP connection |
 | **Touch Setup** | Two-tab setup screen: Tab 1 — WiFi credentials, ZIP code, WiFi scanner, brightness slider; Tab 2 — configurable stock symbols/names and NBA team selection |
 | **Multi-screen** | Setup · Clock · News · Stocks · Daily Forecast · Hourly · NFL · NBA · Joke; tap nav bar to switch |
 | **Persistent settings** | WiFi + ZIP + night brightness + stock symbols + NBA team IDs stored in NVS flash; auto-reconnects on boot |
@@ -399,7 +400,7 @@ The News screen fetches `https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en` 
 |---|---|---|---|
 | Time | NTP (`pool.ntp.org`) | No | UTC offset auto-detected from ZIP; DST-aware |
 | ZIP → coordinates | [api.zippopotam.us](https://api.zippopotam.us) | No | US ZIP codes only |
-| Weather, forecast, UV, sunrise/sunset | [Open-Meteo](https://open-meteo.com) | No | Single request returns all current + daily data |
+| Weather, forecast, UV, sunrise/sunset | [Open-Meteo](https://open-meteo.com) | No | Single request returns all current + daily data; persistent TLS session reused across hourly fetches |
 | Moon phase | Calculated locally | — | Synodic period formula; no network required |
 | News | [Google News RSS](https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en) | No | RSS 2.0 XML; top US breaking headlines; no rate limit |
 | Stocks | Yahoo Finance chart API (v8, per-symbol) | No | 6 sequential HTTPS requests; `chartPreviousClose` used for index/futures % change |
@@ -414,7 +415,7 @@ The News screen fetches `https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en` 
 | Data | Interval |
 |---|---|
 | Clock display + UTC + moon phase | Every second |
-| Weather + forecast + UV + sunrise/sunset | Every 15 minutes |
+| Weather + forecast + UV + sunrise/sunset | Every 1 hour |
 | Auto night dim check | Every 60 seconds |
 | Weather alerts (+ buzzer if new Extreme/Severe) | Every 5 minutes |
 | News | Every 30 minutes |
@@ -511,12 +512,12 @@ SmartClockProject/
 │       └── TAMC_GT911.cpp   # Fixes: no double Wire.begin; reset() writes CONFIG_FRESH=1
 │
 └── src/
-    ├── main.cpp             # setup(), loop(), WiFi, NTP, fetch orchestration, BM8563 RTC sync
+    ├── main.cpp             # setup(), loop(), WiFi, NTP, fetch orchestration, BM8563 RTC sync, 30 s task watchdog
     ├── prefs_mgr.h          # NVS persistence (WiFi, ZIP, city, UTC offset, brightness, stock symbols/names, NBA team IDs)
     ├── rtc_bm8563.h         # BM8563 hardware RTC driver (I2C 0x51, battery-backed, PCF8563-compatible)
     ├── backlight.h          # Software brightness (bswap16-aware RGB565 pixel scaling in disp_flush)
     ├── buzzer.h             # Piezo buzzer via STC8H I2C 0x30 (0xF6=ON, 0xF7=OFF, buzzer_beep())
-    ├── weather_api.h        # Zippopotam geocode + Open-Meteo weather + 5-day forecast + UV
+    ├── weather_api.h        # Zippopotam geocode + Open-Meteo weather + 5-day forecast + UV; persistent TLS client
     ├── moon.h               # Moon phase calculation (local, no network)
     ├── iss_api.h            # ISS visible pass times via N2YO API
     ├── alerts_api.h         # NWS active weather alerts
@@ -555,7 +556,7 @@ static const char* STOCK_NAMES_DEFAULT[STOCK_COUNT] = {
 };
 
 // Update frequencies (milliseconds)
-#define WEATHER_UPDATE_MS   (15UL * 60 * 1000)       // 15 minutes
+#define WEATHER_UPDATE_MS   (60UL * 60 * 1000)       //  1 hour
 #define STOCKS_UPDATE_MS    ( 5UL * 60 * 1000)       //  5 minutes
 #define NEWS_UPDATE_MS      (30UL * 60 * 1000)       // 30 minutes
 #define ALERTS_UPDATE_MS    ( 5UL * 60 * 1000)       //  5 minutes
@@ -581,7 +582,8 @@ static const char* STOCK_NAMES_DEFAULT[STOCK_COUNT] = {
 | Horizontal shift artifact | Incorrect flush pattern | Verify `disp_flush()` uses per-scanline `startWrite/endWrite` — see [Display Stability Notes](#display-stability-notes) |
 | Screen jitters on touch/button | D-cache burst to PSRAM | Confirm per-scanline `startWrite/endWrite` in `disp_flush()`; no persistent `gfx.startWrite()` in `setup()` |
 | Screen jitters on startup or download | WiFi/JSON PSRAM contention | Confirm `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096` and `static StaticJsonDocument` in all `*_api.h` |
-| All SSL connections fail after extended uptime (`HTTP -1` on stocks and alerts) | mbedTLS SRAM heap fragmented after ~300–400 SSL handshakes (~12 h uptime) — cert-parse fragments persist across WiFi cycles | Three-layer recovery in `main.cpp`: (1) `recover_ssl_heap()` proactively cycles WiFi when free SRAM < 70 KB; (2) if all 6 stock symbols fail, one reactive WiFi cycle + retry; (3) if retry still fails AND free SRAM < 65 KB, call `ESP.restart()` — BM8563 RTC preserves time, NVS preserves credentials, device recovers in ~10 s with a clean heap. WiFi cycling alone does NOT defragment SRAM because mbedTLS cert-parse fragments are independent of WiFi/LwIP state |
+| All SSL connections fail after extended uptime (`HTTP -1` on stocks and alerts) | mbedTLS SRAM heap fragmented after ~300–400 SSL handshakes (~12 h uptime) — cert-parse fragments persist across WiFi cycles | Three-layer recovery in `main.cpp`: (1) `recover_ssl_heap()` proactively cycles WiFi when free SRAM < 70 KB; (2) if all 6 stock symbols fail, one reactive WiFi cycle + retry; (3) if retry still fails AND free SRAM < 65 KB, call `ESP.restart()` — BM8563 RTC preserves time, NVS preserves credentials, device recovers in ~10 s with a clean heap. WiFi cycling alone does NOT defragment SRAM because mbedTLS cert-parse fragments are independent of WiFi/LwIP state. Persistent TLS clients (weather, stocks, alerts) further reduce handshake frequency by reusing the SSL context across fetches |
+| Device reboots unexpectedly | HTTP request stalled at TCP layer (server accepts connection but never sends response) | 30-second hardware task watchdog (`esp_task_wdt`) resets the device automatically; fed at the top of every fetch call and inside the stock retry loop |
 | Screen flickers on touch | LVGL theme animations enabled | Confirm `LV_THEME_DEFAULT_TRANSITION_TIME 0` and `LV_THEME_DEFAULT_GROW 0` in `lv_conf.h` |
 | Wrong colors at night brightness | LV_COLOR_16_SWAP not accounted for | Pixel scaler must call `__builtin_bswap16()` before/after channel extraction — see `backlight.h` |
 | No buzzer beep on boot | STC8H not responding | Verify I2C bus initialized before `buzzer_on()`; check serial for I2C errors |
