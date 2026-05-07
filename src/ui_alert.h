@@ -5,9 +5,10 @@
 // Uses lv_layer_top() so the banner floats above ALL screens without
 // modifying each screen's layout. The banner is hidden when there are
 // no active alerts and automatically shown when alerts are present.
+// Tapping the banner opens a full-screen modal with detailed alert info.
 //
 // Layout (800 x 26, y=0):
-//   [⚠ ALERT]  scrolling event + headline text ...
+//   [⚠ ALERT]  scrolling event + headline text ... (click to expand)
 // ─────────────────────────────────────────────────────────────────────────────
 #include <Arduino.h>
 #include <lvgl.h>
@@ -16,6 +17,18 @@
 
 static lv_obj_t* _alert_banner = nullptr;
 static lv_obj_t* _alert_lbl    = nullptr;
+static AlertsData* _alert_data_ptr = nullptr;  // pointer for tap event handler
+
+// ─── Event handler: banner tap opens the alert overlay ────────────────────────
+static void _alert_banner_event_cb(lv_event_t* e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_CLICKED && _alert_data_ptr && _alert_data_ptr->count > 0) {
+        // Forward declaration requires actual include at compile time.
+        // These will be resolved in main.cpp after ui_alert_overlay.h is included.
+        extern void ui_alert_overlay_show(const AlertsData& ad);
+        ui_alert_overlay_show(*_alert_data_ptr);
+    }
+}
 
 // ─── Initialise the banner once (call after lv_disp_drv_register) ────────────
 inline void ui_alert_init() {
@@ -32,6 +45,8 @@ inline void ui_alert_init() {
     lv_obj_set_style_pad_top(_alert_banner, 6, 0);
     lv_obj_clear_flag(_alert_banner, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(_alert_banner, LV_OBJ_FLAG_HIDDEN);  // hidden until alerts arrive
+    lv_obj_add_flag(_alert_banner, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(_alert_banner, _alert_banner_event_cb, LV_EVENT_CLICKED, nullptr);
 
     // Fixed "⚠ ALERT" prefix on the left
     lv_obj_t* icon = lv_label_create(_alert_banner);
@@ -54,6 +69,9 @@ inline void ui_alert_init() {
 // ─── Update banner visibility and content from latest alert data ─────────────
 inline void ui_alert_update(const AlertsData& ad) {
     if (!_alert_banner || !_alert_lbl) return;
+
+    // Store pointer for tap event handler
+    _alert_data_ptr = (AlertsData*)&ad;
 
     if (!ad.valid || ad.count == 0) {
         lv_obj_add_flag(_alert_banner, LV_OBJ_FLAG_HIDDEN);
