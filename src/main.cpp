@@ -51,6 +51,7 @@
 #include "ui_forecast.h"
 #include "ui_hourly.h"
 #include "ui_alert.h"
+#include "ui_alert_overlay.h"
 #include "nfl_api.h"
 #include "ui_nfl.h"
 #include "nba_api.h"
@@ -732,7 +733,8 @@ void setup() {
     scr_hourly   = ui_hourly_create();
     scr_nfl      = ui_nfl_create();
     scr_nba      = ui_nba_create();
-    ui_alert_init();   // floating banner on lv_layer_top(), above all screens
+    ui_alert_init();           // floating banner on lv_layer_top(), above all screens
+    ui_alert_overlay_init();   // modal overlay for detailed alert info
 
     Serial.println("[UI] All screens created");
 

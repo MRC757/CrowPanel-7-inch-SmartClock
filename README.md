@@ -20,7 +20,8 @@ A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI 
 | **3-Day Hourly Charts** | Scrollable temperature, wind speed, and precip-chance line charts across 72 hours; semi-transparent area shading below each line; auto-scrolls so current time is always at the left edge; Midnight/Noon markers and Y-axis labels |
 | **UV Index** | Daily maximum UV index on every forecast card |
 | **ISS Pass Times** | Next 3 ISS visible passes scrolling at the bottom of the Forecast screen |
-| **Weather Alerts** | NWS active alerts (tornado, flood, severe storm) shown as a red banner across all screens |
+| **Weather Alerts** | NWS active alerts (tornado, flood, severe storm) shown as a red banner across all screens; tap banner to expand modal with full alert details (description, instructions, affected areas, timing) |
+| **Alert Modal** | Tap the alert banner to view full alert details: color-coded severity badge, full description, recommended actions, affected areas, and valid time range; navigate between multiple alerts with Previous/Next buttons |
 | **Alert Buzzer** | Piezo buzzer sounds 5 beeps for Extreme alerts, 3 beeps for Severe — only on new/changed alerts |
 | **Market Data** | S&P 500, DOW Jones, VYMI, VYM, Gold (GC=F), Silver (SI=F) — price, change, change % |
 | **News** | Google News RSS — up to 12 top US breaking headlines, refreshed every 30 minutes; no API key required |
@@ -157,7 +158,7 @@ All settings are remembered across reboots via NVS flash.
 
 UTC time updates every second. Timezone is auto-detected from the ZIP code via Open-Meteo (DST-aware). Sunrise/sunset come from the same weather fetch. Moon phase is computed locally.
 
-### Alert Banner (when active)
+### Alert Banner & Modal (when active)
 When the NWS reports active alerts for your location, a red banner appears at the top of **every screen**, and the piezo buzzer sounds:
 - **Extreme** alert → 5 beeps (150 ms on / 100 ms off)
 - **Severe** alert → 3 beeps (200 ms on / 150 ms off)
@@ -167,6 +168,72 @@ The buzzer only sounds when the active alert set changes — repeated 5-minute f
 ```
 ⚠ ALERT  Tornado Warning: A tornado warning has been issued for your county...
 ```
+
+**Tap the banner** to expand a full-screen modal with complete alert details:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  [SEVERE] Tornado Warning                                    ✕   │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  * WHAT...A severe thunderstorm capable of producing a         │
+│    tornado was located near Roanoke, moving northeast at       │
+│    35 mph.                                                      │
+│                                                                  │
+│  * WHERE...Roanoke, Virginia                                    │
+│                                                                  │
+│  * WHEN...Until 7:45 PM EDT                                     │
+│                                                                  │
+│  • Move to an interior room on the lowest floor of a sturdy    │
+│    building. Avoid small rooms.                                 │
+│                                                                  │
+│  Areas: Roanoke; Craig; Montgomery                             │
+│                                                                  │
+│  Active: 2:35 PM → 7:45 PM                                     │
+│                                                                  │
+│          ◀ Prev  1/2  Next ▶                                     │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**Modal features:**
+- **Severity badge** — color-coded (red=Extreme, orange=Severe, yellow=Minor) with 24-point font
+- **Full description** — multi-line alert text with "WHAT/WHERE/WHEN/IMPACTS" bullet points
+- **Action instructions** — recommended actions (evacuation, shelter-in-place, etc.)
+- **Affected areas** — list of counties and zones impacted
+- **Timing** — local time when alert became active and when it expires
+- **Navigation** — Previous/Next buttons to browse multiple simultaneous alerts; counter shows current alert (e.g. "1/3")
+- **Dismiss** — tap the close button (✕) or the semi-transparent background to hide the modal
+
+The banner scrolls the first alert headline; the modal shows full details including all fields from the NWS API (urgency, response level, geometry data).
+
+### Alert Modal Details
+
+The modal is 600×340 pixels, centered on screen with 100px side margins and 70px top/bottom margins. It floats on `lv_layer_top()` so it appears above all screens.
+
+**Visual Elements:**
+
+| Element | Details |
+|---------|---------|
+| **Severity Badge** | 80×24 px, color-coded: Red (Extreme), Orange (Severe), Yellow (Minor), top-left |
+| **Event Type** | Large gold text, left-aligned, next to severity badge |
+| **Close Button** | White "✕" on red background, top-right corner; click to dismiss |
+| **Description** | Full multi-line alert text (may scroll if long) |
+| **Instructions** | Action text with bullet point, wraps to next line |
+| **Affected Areas** | Comma-separated county/zone list (e.g. "Roanoke; Craig; Montgomery") |
+| **Timing** | "Active: [onset time] → [expires time]" in local time format |
+| **Nav Buttons** | ◀ Prev, alert counter (e.g. "1/3"), Next ▶ |
+
+**Navigation:**
+- **Prev/Next buttons** disabled (greyed) at first/last alert respectively
+- **Alert counter** shows current alert number (e.g. "2/3")
+- **Background click** dismisses the modal
+
+**Time Format:**
+- ISO-8601 timestamps from NWS (e.g. "2026-05-08T19:45:00-04:00") are converted to local time
+- Displayed as "Day H:MM AM/PM" (leading zero stripped from hour)
+- Example: "Fri 7:45 PM"
+
+---
 
 ### News Screen
 Full scrollable list of up to 12 breaking headlines from the **Google News RSS** feed (`https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en`). No API key required. Headlines are the current top US stories across all topics. Refreshed every 30 minutes.
@@ -405,7 +472,7 @@ The News screen fetches `https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en` 
 | News | [Google News RSS](https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en) | No | RSS 2.0 XML; top US breaking headlines; no rate limit |
 | Stocks | Yahoo Finance chart API (v8, per-symbol) | No | 6 sequential HTTPS requests; `chartPreviousClose` used for index/futures % change |
 | ISS pass times | [N2YO](https://www.n2yo.com) visual passes API | **Free key** | HTTPS; NORAD ID 25544 (ISS) |
-| Weather alerts | [NWS API](https://api.weather.gov/alerts/active) | No | HTTPS, US only; uses lat/lon from geocode |
+| Weather alerts | [NWS API](https://api.weather.gov/alerts/active) | No | HTTPS, US only; fetches event, headline, severity, urgency, response level, description, instruction, affected areas, onset/expires times |
 | NFL schedule & scores | [Ball Don't Lie](https://www.balldontlie.io) | **Free key** | HTTPS; `/nfl/v1/games` filtered by date |
 | NBA schedule & scores (2 configurable teams) | [Ball Don't Lie](https://www.balldontlie.io) | **Same key as NFL** | HTTPS; `/v1/games` filtered by configurable `team_ids[]` + date range |
 | Random joke | [RapidAPI Dad Jokes](https://rapidapi.com/KegenGuyll/api/dad-jokes) | **Free RapidAPI key** | HTTPS; always two-part (setup + punchline) |
@@ -536,7 +603,8 @@ SmartClockProject/
     ├── ui_nfl.h             # NFL schedule screen (scrollable game list, 7-day window)
     ├── ui_nba.h             # NBA schedule screen — Lakers & Warriors, 7-day window
     ├── ui_joke.h            # Joke screen — setup panel + punchline panel + staleness indicator
-    └── ui_alert.h           # Alert banner on lv_layer_top() (appears above all screens)
+    ├── ui_alert.h           # Alert banner on lv_layer_top() (appears above all screens, clickable)
+    └── ui_alert_overlay.h   # Alert detail modal (600×340 px, centered overlay) with prev/next navigation
 ```
 
 ---
