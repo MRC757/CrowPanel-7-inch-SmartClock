@@ -214,25 +214,11 @@ inline void ui_alert_overlay_show(const AlertsData& ad) {
         lv_label_set_text(_overlay_desc, "No details available.");
     }
 
-    // Instruction (if present)
-    if (strlen(a.instruction) > 0) {
-        String instr_text = "";
-        instr_text += LV_SYMBOL_BULLET;
-        instr_text += " ";
-        instr_text += a.instruction;
-        lv_label_set_text(_overlay_instr, instr_text.c_str());
-    } else {
-        lv_label_set_text(_overlay_instr, "");
-    }
+    // Instruction label hidden (field removed to conserve memory)
+    lv_label_set_text(_overlay_instr, "");
 
-    // Area (affected regions)
-    if (strlen(a.areaDesc) > 0) {
-        String area_text = "Areas: ";
-        area_text += a.areaDesc;
-        lv_label_set_text(_overlay_area, area_text.c_str());
-    } else {
-        lv_label_set_text(_overlay_area, "");
-    }
+    // Area hidden (field removed — alerts already scoped to user's zip code)
+    lv_label_set_text(_overlay_area, "");
 
     // Timing (onset → expires)
     char onset_str[32], expires_str[32];

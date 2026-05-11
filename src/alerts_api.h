@@ -23,8 +23,6 @@ struct AlertInfo {
     char urgency[16];         // "Immediate", "Expected", "Future"
     char response[16];        // "Execute", "Prepare", "Monitor", "Assess"
     char description[512];    // full details: "* WHAT... * WHERE... * WHEN... * IMPACTS..."
-    char instruction[256];    // action text: "Move to interior room..."
-    char areaDesc[256];       // affected areas: "County; County; ..."
     time_t onset;             // Unix timestamp when alert begins
     time_t expires;           // Unix timestamp when alert expires
 };
@@ -106,12 +104,10 @@ static bool fetchAlerts(float lat, float lon, AlertsData& ad) {
     filter["features"][0]["properties"]["urgency"]     = true;
     filter["features"][0]["properties"]["response"]    = true;
     filter["features"][0]["properties"]["description"] = true;
-    filter["features"][0]["properties"]["instruction"] = true;
-    filter["features"][0]["properties"]["areaDesc"]    = true;
     filter["features"][0]["properties"]["onset"]       = true;
     filter["features"][0]["properties"]["expires"]     = true;
 
-    static StaticJsonDocument<8192> doc; doc.clear();
+    static StaticJsonDocument<2048> doc; doc.clear();
     DeserializationError err = deserializeJson(doc, http.getStream(),
                                                DeserializationOption::Filter(filter));
     http.end();
@@ -137,8 +133,6 @@ static bool fetchAlerts(float lat, float lon, AlertsData& ad) {
             strncpy(ad.alerts[ad.count].urgency,     props["urgency"]     | "Unknown", 15);
             strncpy(ad.alerts[ad.count].response,    props["response"]    | "Monitor",  15);
             strncpy(ad.alerts[ad.count].description, props["description"] | "",        511);
-            strncpy(ad.alerts[ad.count].instruction, props["instruction"] | "",        255);
-            strncpy(ad.alerts[ad.count].areaDesc,    props["areaDesc"]    | "",        255);
 
             ad.alerts[ad.count].event[47]       = '\0';
             ad.alerts[ad.count].headline[127]   = '\0';
@@ -146,8 +140,6 @@ static bool fetchAlerts(float lat, float lon, AlertsData& ad) {
             ad.alerts[ad.count].urgency[15]     = '\0';
             ad.alerts[ad.count].response[15]    = '\0';
             ad.alerts[ad.count].description[511] = '\0';
-            ad.alerts[ad.count].instruction[255] = '\0';
-            ad.alerts[ad.count].areaDesc[255]   = '\0';
 
             // Parse ISO-8601 timestamps to Unix time
             const char* onset_str = props["onset"] | "";
