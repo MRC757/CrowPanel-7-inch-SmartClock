@@ -184,11 +184,6 @@ The buzzer only sounds when the active alert set changes — repeated 5-minute f
 │                                                                  │
 │  * WHEN...Until 7:45 PM EDT                                     │
 │                                                                  │
-│  • Move to an interior room on the lowest floor of a sturdy    │
-│    building. Avoid small rooms.                                 │
-│                                                                  │
-│  Areas: Roanoke; Craig; Montgomery                             │
-│                                                                  │
 │  Active: 2:35 PM → 7:45 PM                                     │
 │                                                                  │
 │          ◀ Prev  1/2  Next ▶                                     │
@@ -204,7 +199,29 @@ The buzzer only sounds when the active alert set changes — repeated 5-minute f
 - **Navigation** — Previous/Next buttons to browse multiple simultaneous alerts; counter shows current alert (e.g. "1/3")
 - **Dismiss** — tap the close button (✕) or the semi-transparent background to hide the modal
 
-The banner scrolls the first alert headline; the modal shows full details including all fields from the NWS API (urgency, response level, geometry data).
+The banner scrolls the first alert headline; the modal shows full details including the key alert fields.
+
+### NWS Alert Memory Optimization
+
+To conserve the ESP32-S3's limited heap (~320 KB) and prevent memory fragmentation that could corrupt the LVGL UI, the alert system has been optimized:
+
+**Fields retained** (essential alert info):
+- `event` — Alert type (e.g., "Tornado Warning")
+- `headline` — Short summary
+- `severity`, `urgency`, `response` — Alert metadata
+- `description` — Full alert details
+- `onset`, `expires` — Valid time range
+
+**Fields removed** (redundant for single-location use):
+- `instruction[256]` — Action recommendations (not displayed)
+- `areaDesc[256]` — Affected areas (redundant — alerts are already scoped to the user's ZIP code)
+
+**Memory savings:**
+- JSON parsing buffer: 8 KB → 2 KB (reduced 75%)
+- Per-alert struct: ~1.25 KB → ~750 B
+- Total heap savings: ~7.5 KB freed
+
+This keeps the static JSON buffer small, reducing heap fragmentation that could otherwise corrupt LVGL's style cache and cause rendering artifacts (e.g., text color corruption on weather pages).
 
 ### Alert Modal Details
 
@@ -218,8 +235,6 @@ The modal is 600×340 pixels, centered on screen with 100px side margins and 70p
 | **Event Type** | Large gold text, left-aligned, next to severity badge |
 | **Close Button** | White "✕" on red background, top-right corner; click to dismiss |
 | **Description** | Full multi-line alert text (may scroll if long) |
-| **Instructions** | Action text with bullet point, wraps to next line |
-| **Affected Areas** | Comma-separated county/zone list (e.g. "Roanoke; Craig; Montgomery") |
 | **Timing** | "Active: [onset time] → [expires time]" in local time format |
 | **Nav Buttons** | ◀ Prev, alert counter (e.g. "1/3"), Next ▶ |
 
@@ -472,7 +487,7 @@ The News screen fetches `https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en` 
 | News | [Google News RSS](https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en) | No | RSS 2.0 XML; top US breaking headlines; no rate limit |
 | Stocks | Yahoo Finance chart API (v8, per-symbol) | No | 6 sequential HTTPS requests; `chartPreviousClose` used for index/futures % change |
 | ISS pass times | [N2YO](https://www.n2yo.com) visual passes API | **Free key** | HTTPS; NORAD ID 25544 (ISS) |
-| Weather alerts | [NWS API](https://api.weather.gov/alerts/active) | No | HTTPS, US only; fetches event, headline, severity, urgency, response level, description, instruction, affected areas, onset/expires times |
+| Weather alerts | [NWS API](https://api.weather.gov/alerts/active) | No | HTTPS, US only; fetches event, headline, severity, urgency, response level, description, onset/expires times |
 | NFL schedule & scores | [Ball Don't Lie](https://www.balldontlie.io) | **Free key** | HTTPS; `/nfl/v1/games` filtered by date |
 | NBA schedule & scores (2 configurable teams) | [Ball Don't Lie](https://www.balldontlie.io) | **Same key as NFL** | HTTPS; `/v1/games` filtered by configurable `team_ids[]` + date range |
 | Random joke | [RapidAPI Dad Jokes](https://rapidapi.com/KegenGuyll/api/dad-jokes) | **Free RapidAPI key** | HTTPS; always two-part (setup + punchline) |
