@@ -7,9 +7,10 @@
 //   2. Copy your API key from My Account
 //   3. Set N2YO_API_KEY in include/secrets.h
 //
-// Endpoint: N2YO_PASSES_BASE{lat}/{lon}/0/{days}/{minEl}/&apiKey={key}
+// Endpoint: N2YO_PASSES_BASE{lat}/{lon}/0/{days}/{minVisibility}&apiKey={key}
 //   NORAD ID 25544 = ISS (ZARYA)
-//   days = 3, minElevation = 10°
+//   days = 3, minVisibility = 30 seconds (server-side minimum pass duration)
+//   Passes with maxEl < 20° filtered client-side for horizon obstructions
 //
 // NOTE: The original Open Notify iss-pass.json endpoint is permanently
 // decommissioned (~2023) and returns HTTP 404.
@@ -45,10 +46,12 @@ static bool fetchIss(float lat, float lon, IssData& id) {
     WiFiClientSecure client;
     client.setInsecure();
 
-    // /visualpasses/25544/{lat}/{lon}/{altM}/{days}/{minElev}/&apiKey={key}
+    // /visualpasses/25544/{lat}/{lon}/{altM}/{days}/{minVisibility}&apiKey={key}
+    // minVisibility = minimum pass duration in seconds (not elevation degrees)
+    // Passes below 20° peak elevation are filtered out after fetch.
     String url = String(N2YO_PASSES_BASE)
                + String(lat, 4) + "/" + String(lon, 4)
-               + "/0/3/10/&apiKey=" + N2YO_API_KEY;
+               + "/0/3/30&apiKey=" + N2YO_API_KEY;
 
     HTTPClient http;
     http.begin(client, url);
@@ -63,10 +66,11 @@ static bool fetchIss(float lat, float lon, IssData& id) {
         return false;
     }
 
-    // Filter: only startUTC and duration from each pass
+    // Filter: startUTC, duration, and maxEl (peak elevation) from each pass
     StaticJsonDocument<96> filter;
     filter["passes"][0]["startUTC"] = true;
     filter["passes"][0]["duration"] = true;
+    filter["passes"][0]["maxEl"]    = true;
 
     // static → BSS segment (internal SRAM), not heap/PSRAM.
     static StaticJsonDocument<512> doc; doc.clear();
@@ -90,6 +94,8 @@ static bool fetchIss(float lat, float lon, IssData& id) {
     id.count = 0;
     for (JsonObject pass : passes) {
         if (id.count >= ISS_MAX_PASSES) break;
+        int maxEl = pass["maxEl"] | 0;
+        if (maxEl < 20) continue;   // skip passes blocked by horizon (trees, buildings)
         id.passes[id.count].risetime = pass["startUTC"] | (long)0;
         id.passes[id.count].duration = pass["duration"] | 0;
         id.count++;

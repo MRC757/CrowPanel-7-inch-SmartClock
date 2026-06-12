@@ -19,9 +19,9 @@ A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI 
 | **5-Day Forecast** | Dedicated screen: daily high/low, condition, precipitation, UV index per day |
 | **3-Day Hourly Charts** | Scrollable temperature, wind speed, and precip-chance line charts across 72 hours; semi-transparent area shading below each line; auto-scrolls so current time is always at the left edge; Midnight/Noon markers and Y-axis labels |
 | **UV Index** | Daily maximum UV index on every forecast card |
-| **ISS Pass Times** | Next 3 ISS visible passes scrolling at the bottom of the Forecast screen |
-| **Weather Alerts** | NWS active alerts (tornado, flood, severe storm) shown as a red banner across all screens; tap banner to expand modal with full alert details (description, instructions, affected areas, timing) |
-| **Alert Modal** | Tap the alert banner to view full alert details: color-coded severity badge, full description, recommended actions, affected areas, and valid time range; navigate between multiple alerts with Previous/Next buttons |
+| **ISS Pass Times** | Next 3 ISS visible passes scrolling at the bottom of the Forecast screen; filtered to passes with peak elevation ≥ 20° to account for horizon obstructions (trees, buildings) |
+| **Weather Alerts** | NWS active alerts (tornado, flood, severe storm) shown as a red banner across all screens; tap banner to expand modal with full alert details |
+| **Alert Modal** | Tap the alert banner to view full alert details: color-coded severity badge, full description, and valid time range; navigate between multiple alerts with Previous/Next buttons |
 | **Alert Buzzer** | Piezo buzzer sounds 5 beeps for Extreme alerts, 3 beeps for Severe — only on new/changed alerts |
 | **Market Data** | S&P 500, DOW Jones, VYMI, VYM, Gold (GC=F), Silver (SI=F) — price, change, change % |
 | **News** | Google News RSS — up to 12 top US breaking headlines, refreshed every 30 minutes; no API key required |
@@ -33,6 +33,8 @@ A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI 
 | **Touch Setup** | Two-tab setup screen: Tab 1 — WiFi credentials, ZIP code, WiFi scanner, brightness slider; Tab 2 — configurable stock symbols/names and NBA team selection |
 | **Multi-screen** | Setup · Clock · News · Stocks · Daily Forecast · Hourly · NFL · NBA · Joke; tap nav bar to switch |
 | **Persistent settings** | WiFi + ZIP + night brightness + stock symbols + NBA team IDs stored in NVS flash; auto-reconnects on boot |
+| **Offline Mode** | If WiFi is unavailable at boot, the clock screen stays up showing an amber "⚠ WiFi offline — reconnecting..." indicator; reconnect is retried automatically every 30 seconds; full data load resumes on reconnect |
+| **Stale Data Indicators** | "Updated" timestamps on weather, stocks, and news screens age from gray → orange (2× update interval) → red (4× update interval) so stale data is always visible |
 
 ---
 
@@ -237,6 +239,8 @@ The modal is 600×340 pixels, centered on screen with 100px side margins and 70p
 | **Description** | Full multi-line alert text (may scroll if long) |
 | **Timing** | "Active: [onset time] → [expires time]" in local time format |
 | **Nav Buttons** | ◀ Prev, alert counter (e.g. "1/3"), Next ▶ |
+
+> **Note:** The `instruction` (action text) and `areaDesc` (affected counties) fields are intentionally omitted to conserve ESP32 heap. Alerts are already scoped to your ZIP code, so the area list is redundant. See [NWS Alert Memory Optimization](#nws-alert-memory-optimization).
 
 **Navigation:**
 - **Prev/Next buttons** disabled (greyed) at first/last alert respectively
@@ -486,7 +490,7 @@ The News screen fetches `https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en` 
 | Moon phase | Calculated locally | — | Synodic period formula; no network required |
 | News | [Google News RSS](https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en) | No | RSS 2.0 XML; top US breaking headlines; no rate limit |
 | Stocks | Yahoo Finance chart API (v8, per-symbol) | No | 6 sequential HTTPS requests; `chartPreviousClose` used for index/futures % change |
-| ISS pass times | [N2YO](https://www.n2yo.com) visual passes API | **Free key** | HTTPS; NORAD ID 25544 (ISS) |
+| ISS pass times | [N2YO](https://www.n2yo.com) visual passes API | **Free key** | HTTPS; NORAD ID 25544 (ISS); minimum 30 s pass duration (server-side); passes with peak elevation < 20° filtered client-side |
 | Weather alerts | [NWS API](https://api.weather.gov/alerts/active) | No | HTTPS, US only; fetches event, headline, severity, urgency, response level, description, onset/expires times |
 | NFL schedule & scores | [Ball Don't Lie](https://www.balldontlie.io) | **Free key** | HTTPS; `/nfl/v1/games` filtered by date |
 | NBA schedule & scores (2 configurable teams) | [Ball Don't Lie](https://www.balldontlie.io) | **Same key as NFL** | HTTPS; `/v1/games` filtered by configurable `team_ids[]` + date range |
@@ -682,6 +686,8 @@ static const char* STOCK_NAMES_DEFAULT[STOCK_COUNT] = {
 | Stocks show N/A | Yahoo Finance unavailable | Unofficial API; check serial for HTTP error code; retries automatically |
 | Gold/Silver show N/A | Futures market closed or API issue | GC=F / SI=F are COMEX futures; unavailable on some weekends |
 | Alert banner not appearing | Non-US location or no active alerts | NWS covers US only; 404 treated as "no alerts" (no error shown) |
+| Clock shows "⚠ WiFi offline" on boot | WiFi credentials saved but network unreachable | Device retries automatically every 30 s; check SSID/password in Setup if it never connects |
+| ISS always shows "No visible passes in next 3 days" | N2YO API URL had trailing slash bug (fixed) or all passes below 20° elevation | Reflash firmware; if still empty, ISS genuinely has no passes clearing 20° at your location in the next 3 days |
 | ISS strip shows reminder | N2YO API key not set | Add key and re-flash |
 | NFL shows setup reminder | BDL API key not set | Add key and re-flash |
 | NFL game times wrong | Timezone mismatch | Weather fetch must complete first to set UTC offset |
