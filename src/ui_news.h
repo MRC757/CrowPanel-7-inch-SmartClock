@@ -77,7 +77,9 @@ inline void ui_news_update(const NewsData& nd) {
             struct tm ti;
             if (getLocalTime(&ti, 100)) {
                 char ts[20];
-                strftime(ts, sizeof(ts), "%I:%M %p", &ti);
+                strftime(ts, sizeof(ts), "Updated %I:%M %p", &ti);
+                char* p = ts + 8;
+                if (p[0] == '0') memmove(p, p + 1, strlen(p));
                 lv_label_set_text(_news_hdr_time, ts);
             }
             lv_obj_set_style_text_color(_news_hdr_time, lv_color_hex(0x9e9e9e), 0);

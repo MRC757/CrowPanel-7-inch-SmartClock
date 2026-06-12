@@ -27,6 +27,13 @@
 // ─── Widget handles ────────────────────────────────────────────────────────
 static lv_obj_t* _main_scr        = nullptr;
 
+// Staleness tracking — millis() at last successful fetch (0 = never updated)
+static unsigned long _main_last_wx_update_ms  = 0;
+static unsigned long _main_last_stk_update_ms = 0;
+
+// Offline indicator
+static lv_obj_t* _lbl_offline = nullptr;
+
 // Header
 static lv_obj_t* _lbl_city        = nullptr;
 static lv_obj_t* _lbl_time        = nullptr;
@@ -156,6 +163,10 @@ inline lv_obj_t* ui_main_create() {
 
     _lbl_city = make_label(hdr, "---, --", &lv_font_montserrat_24,
                             lv_color_hex(0x80cbc4), 10, 28);
+
+    _lbl_offline = make_label(hdr, LV_SYMBOL_WARNING " WiFi offline \xe2\x80\x94 reconnecting...",
+                               &lv_font_montserrat_12, lv_color_hex(0xff9800), 10, 58);
+    lv_obj_add_flag(_lbl_offline, LV_OBJ_FLAG_HIDDEN);
 
     _lbl_time = lv_label_create(hdr);
     lv_label_set_text(_lbl_time, "--:--:--");
@@ -303,6 +314,26 @@ inline void ui_main_update_clock() {
         prev_utc_min = ti.tm_min;
     }
 
+    // Staleness coloring for weather and stocks "Updated" labels
+    // Weather: orange after 2 h, red after 4 h (2× / 4× WEATHER_UPDATE_MS)
+    // Stocks:  orange after 10 min, red after 20 min (2× / 4× STOCKS_UPDATE_MS)
+    if (_lbl_wx_updated && _main_last_wx_update_ms > 0) {
+        unsigned long wx_age = millis() - _main_last_wx_update_ms;
+        lv_color_t wc;
+        if      (wx_age > 4UL * WEATHER_UPDATE_MS) wc = lv_color_hex(0xf44336);
+        else if (wx_age > 2UL * WEATHER_UPDATE_MS) wc = lv_color_hex(0xff9800);
+        else                                        wc = lv_color_hex(CLR_SUBTEXT);
+        lv_obj_set_style_text_color(_lbl_wx_updated, wc, 0);
+    }
+    if (_lbl_stk_updated && _main_last_stk_update_ms > 0) {
+        unsigned long stk_age = millis() - _main_last_stk_update_ms;
+        lv_color_t sc;
+        if      (stk_age > 4UL * STOCKS_UPDATE_MS) sc = lv_color_hex(0xf44336);
+        else if (stk_age > 2UL * STOCKS_UPDATE_MS) sc = lv_color_hex(0xff9800);
+        else                                        sc = lv_color_hex(CLR_SUBTEXT);
+        lv_obj_set_style_text_color(_lbl_stk_updated, sc, 0);
+    }
+
     // Moon phase — changes every few days; compare string before updating
     if (_lbl_moon) {
         time_t now = time(nullptr);
@@ -351,6 +382,9 @@ inline void ui_main_update_weather(const WeatherData& wd) {
         strftime(ts, sizeof(ts), "Updated %I:%M %p", &ti);
         lv_label_set_text(_lbl_wx_updated, ts);
     }
+    _main_last_wx_update_ms = millis();
+    if (_lbl_wx_updated)
+        lv_obj_set_style_text_color(_lbl_wx_updated, lv_color_hex(CLR_SUBTEXT), 0);
 }
 
 // ─── Update stocks panel ───────────────────────────────────────────────────
@@ -402,6 +436,20 @@ inline void ui_main_update_stocks(const StocksData& sd) {
         char ts[20];
         strftime(ts, sizeof(ts), "Updated %I:%M %p", &ti);
         lv_label_set_text(_lbl_stk_updated, ts);
+    }
+    _main_last_stk_update_ms = millis();
+    if (_lbl_stk_updated)
+        lv_obj_set_style_text_color(_lbl_stk_updated, lv_color_hex(CLR_SUBTEXT), 0);
+}
+
+// ─── Offline mode indicator ────────────────────────────────────────────────
+// Call with true when WiFi is unavailable; false once connected and data loads.
+inline void ui_main_set_offline(bool offline) {
+    if (!_lbl_offline) return;
+    if (offline) {
+        lv_obj_clear_flag(_lbl_offline, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(_lbl_offline, LV_OBJ_FLAG_HIDDEN);
     }
 }
 

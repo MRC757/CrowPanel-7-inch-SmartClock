@@ -15,6 +15,7 @@
 
 static lv_obj_t*     _stk_scr            = nullptr;
 static lv_obj_t*     _stk_hdr_time       = nullptr;
+static unsigned long _stk_last_update_ms = 0;   // millis() at last successful fetch
 
 // Card widgets (one per stock)
 struct StockCard {
@@ -156,14 +157,8 @@ inline void ui_stocks_update(const StocksData& sd) {
         char* p = ts + 8;
         if (p[0] == '0') memmove(p, p + 1, strlen(p));
         lv_label_set_text(_stk_hdr_time, ts);
-
-        // Age in seconds since the actual API fetch
-        time_t age_sec = time(nullptr) - sd.fetch_time;
-        lv_color_t c;
-        if      (age_sec > 4L * STOCKS_UPDATE_MS / 1000) c = lv_color_hex(0xf44336);  // red   >20 min
-        else if (age_sec > 2L * STOCKS_UPDATE_MS / 1000) c = lv_color_hex(0xff9800);  // orange >10 min
-        else                                              c = lv_color_hex(0x9e9e9e);  // gray
-        lv_obj_set_style_text_color(_stk_hdr_time, c, 0);
+        _stk_last_update_ms = millis();
+        lv_obj_set_style_text_color(_stk_hdr_time, lv_color_hex(0x9e9e9e), 0);
     }
 
     if (!sd.valid) return;
@@ -205,4 +200,15 @@ inline void ui_stocks_update(const StocksData& sd) {
         lv_obj_set_style_text_color(c.lbl_change,  chg_color, 0);
         lv_obj_set_style_text_color(c.lbl_chg_pct, chg_color, 0);
     }
+}
+
+// ─── Refresh staleness color on navigation ────────────────────────────────
+inline void ui_stocks_tick() {
+    if (!_stk_hdr_time || _stk_last_update_ms == 0) return;
+    unsigned long age = millis() - _stk_last_update_ms;
+    lv_color_t c;
+    if      (age > 4UL * STOCKS_UPDATE_MS) c = lv_color_hex(0xf44336);  // red   — very stale
+    else if (age > 2UL * STOCKS_UPDATE_MS) c = lv_color_hex(0xff9800);  // orange — overdue
+    else                                   c = lv_color_hex(0x9e9e9e);  // gray  — fresh
+    lv_obj_set_style_text_color(_stk_hdr_time, c, 0);
 }

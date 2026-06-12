@@ -194,6 +194,7 @@ void navigateTo(int screenId) {
         case SCR_STOCKS:
             target = scr_stocks;
             ui_stocks_update(g_stocks);  // push latest data
+            ui_stocks_tick();            // refresh staleness color
             break;
         case SCR_FORECAST:
             target = scr_forecast;
@@ -767,15 +768,16 @@ void setup() {
         ui_setup_set_status("Auto-connecting to WiFi...", lv_color_hex(0xffb300));
 
         if (wifi_connect(g_prefs.wifi_ssid, g_prefs.wifi_pass)) {
+            ui_main_set_offline(false);
             ntp_sync();
             initial_fetch();
             check_auto_dim();  // set correct brightness once weather data is ready
         } else {
-            // Connection failed — drop back to setup so user can fix credentials
-            ui_setup_set_status(
-                "Auto-connect failed. Please check your WiFi settings.",
-                lv_color_hex(0xf44336));
-            lv_scr_load(scr_setup);
+            // Connection failed — stay on clock screen in offline mode.
+            // The reconnect watchdog in loop() will retry every 30 seconds.
+            Serial.println("[WiFi] Auto-connect failed — entering offline mode");
+            ui_main_set_offline(true);
+            last_reconnect_ms = millis();  // start 30 s retry timer from now
         }
     } else {
         lv_scr_load(scr_setup);
@@ -849,26 +851,32 @@ void loop() {
             check_auto_dim();
         }
 
-    } else if (!wifi_connected && first_fetch_done &&
+    } else if (!wifi_connected &&
                strlen(g_prefs.wifi_ssid) > 0 &&
                millis() - last_reconnect_ms >= 30000UL) {
-        // Reconnect watchdog: retry every 30 s after a disconnect.
-        // Uses a dedicated timer so no data-fetch timer is corrupted.
+        // Reconnect watchdog: retry every 30 s whether this is a first-boot
+        // offline start or a mid-session disconnect.
         last_reconnect_ms = millis();
         Serial.println("[WiFi] Attempting reconnect...");
         wifi_connect(g_prefs.wifi_ssid, g_prefs.wifi_pass, 8000);
         if (wifi_connected) {
-            unsigned long now = millis();
+            ui_main_set_offline(false);
             ntp_sync();
-            // Re-fetch any source whose data is stale (age >= its normal interval)
-            if (now - last_weather_ms >= WEATHER_UPDATE_MS) do_weather_fetch();
-            if (now - last_news_ms    >= NEWS_UPDATE_MS)    do_news_fetch();
-            if (now - last_stocks_ms  >= STOCKS_UPDATE_MS)  do_stocks_fetch();
-            if (now - last_alerts_ms  >= ALERTS_UPDATE_MS)  do_alerts_fetch();
-            if (now - last_nfl_ms     >= NFL_UPDATE_MS)     do_nfl_fetch();
-            if (now - last_nba_ms     >= NBA_UPDATE_MS)     do_nba_fetch();
-            // ISS is 6-hour; only refetch if genuinely stale
-            if (now - last_iss_ms     >= ISS_UPDATE_MS)     do_iss_fetch();
+            if (!first_fetch_done) {
+                // First-boot offline recovery — run the full initial fetch
+                initial_fetch();
+                check_auto_dim();
+            } else {
+                // Mid-session reconnect — re-fetch any source that went stale
+                unsigned long now = millis();
+                if (now - last_weather_ms >= WEATHER_UPDATE_MS) do_weather_fetch();
+                if (now - last_news_ms    >= NEWS_UPDATE_MS)    do_news_fetch();
+                if (now - last_stocks_ms  >= STOCKS_UPDATE_MS)  do_stocks_fetch();
+                if (now - last_alerts_ms  >= ALERTS_UPDATE_MS)  do_alerts_fetch();
+                if (now - last_nfl_ms     >= NFL_UPDATE_MS)     do_nfl_fetch();
+                if (now - last_nba_ms     >= NBA_UPDATE_MS)     do_nba_fetch();
+                if (now - last_iss_ms     >= ISS_UPDATE_MS)     do_iss_fetch();
+            }
         }
     }
 
