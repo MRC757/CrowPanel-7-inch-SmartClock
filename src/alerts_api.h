@@ -13,6 +13,7 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include "json_buf.h"
 
 #define ALERTS_MAX 3
 
@@ -107,7 +108,8 @@ static bool fetchAlerts(float lat, float lon, AlertsData& ad) {
     filter["features"][0]["properties"]["onset"]       = true;
     filter["features"][0]["properties"]["expires"]     = true;
 
-    static StaticJsonDocument<2048> doc; doc.clear();
+    // Shared BSS parse buffer (json_buf.h) — internal SRAM, no heap/PSRAM.
+    auto& doc = g_json_doc; doc.clear();
     DeserializationError err = deserializeJson(doc, http.getStream(),
                                                DeserializationOption::Filter(filter));
     http.end();

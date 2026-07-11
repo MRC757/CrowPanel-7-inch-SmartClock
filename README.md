@@ -1,6 +1,6 @@
 # Smart Clock
 
-A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI ESP32-S3** *(SKU: DIS02170A, V1.3)* (800×480 IPS touchscreen). Displays local time, weather, 5-day forecast, 3-day hourly charts, market data, live breaking news, ISS pass times, weather alerts, NFL scores, NBA scores for any two configurable teams, and random dad jokes — with automatic night dimming, audible severe-weather alerts, and configurable stock symbols and NBA teams via the on-screen setup.
+A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI ESP32-S3** *(SKU: DIS02170A, V1.3)* (800×480 IPS touchscreen). Displays local time, weather, 5-day forecast, 3-day hourly charts, market data, live breaking news, ISS pass times, weather alerts, NFL scores, and NBA scores for any two configurable teams — with automatic night dimming, audible severe-weather alerts, and configurable stock symbols and NBA teams via the on-screen setup.
 
 ![Smart Clock Layout](docs/layout.png)
 > *(screenshot placeholder — add your own after first boot)*
@@ -22,16 +22,15 @@ A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI 
 | **ISS Pass Times** | Next 3 ISS visible passes scrolling at the bottom of the Forecast screen; filtered to passes with peak elevation ≥ 20° to account for horizon obstructions (trees, buildings) |
 | **Weather Alerts** | NWS active alerts (tornado, flood, severe storm) shown as a red banner across all screens; tap banner to expand modal with full alert details |
 | **Alert Modal** | Tap the alert banner to view full alert details: color-coded severity badge, full description, and valid time range; navigate between multiple alerts with Previous/Next buttons |
-| **Alert Buzzer** | Piezo buzzer sounds 5 beeps for Extreme alerts, 3 beeps for Severe — only on new/changed alerts |
+| **Alert Buzzer** | Piezo buzzer sounds 5 seconds of pulsing audio on new Extreme or Severe alerts — rapid bursts for Extreme, slower for Severe; only fires when the alert set changes |
 | **Market Data** | S&P 500, DOW Jones, VYMI, VYM, Gold (GC=F), Silver (SI=F) — price, change, change % |
 | **News** | Google News RSS — up to 12 top US breaking headlines, refreshed every 30 minutes; no API key required |
 | **NFL Schedule** | Next 7 days of NFL games: teams, kickoff time, live scores, final scores |
 | **NBA Schedule** | Next 7 days of games for any two configurable NBA teams: tip-off time, live quarter scores, final scores, postponements; team-color accent strip per row |
-| **Joke Screen** | Random dad joke from RapidAPI Dad Jokes; two-part jokes show setup (white) + punchline (gold); refreshed every 3 hours |
 | **Auto Night Dim** | Display automatically dims at sunset and brightens at sunrise; configurable brightness |
 | **Hardware Watchdog** | 30-second ESP32 task watchdog resets the device if the main loop hangs in a stalled HTTP connection |
 | **Touch Setup** | Two-tab setup screen: Tab 1 — WiFi credentials, ZIP code, WiFi scanner, brightness slider; Tab 2 — configurable stock symbols/names and NBA team selection |
-| **Multi-screen** | Setup · Clock · News · Stocks · Daily Forecast · Hourly · NFL · NBA · Joke; tap nav bar to switch |
+| **Multi-screen** | Setup · Clock · News · Stocks · Daily Forecast · Hourly · NFL · NBA; tap nav bar to switch |
 | **Persistent settings** | WiFi + ZIP + night brightness + stock symbols + NBA team IDs stored in NVS flash; auto-reconnects on boot |
 | **Offline Mode** | If WiFi is unavailable at boot, the clock screen stays up showing an amber "⚠ WiFi offline — reconnecting..." indicator; reconnect is retried automatically every 30 seconds; full data load resumes on reconnect |
 | **Stale Data Indicators** | "Updated" timestamps on weather, stocks, and news screens age from gray → orange (2× update interval) → red (4× update interval) so stale data is always visible |
@@ -161,9 +160,9 @@ All settings are remembered across reboots via NVS flash.
 UTC time updates every second. Timezone is auto-detected from the ZIP code via Open-Meteo (DST-aware). Sunrise/sunset come from the same weather fetch. Moon phase is computed locally.
 
 ### Alert Banner & Modal (when active)
-When the NWS reports active alerts for your location, a red banner appears at the top of **every screen**, and the piezo buzzer sounds:
-- **Extreme** alert → 5 beeps (150 ms on / 100 ms off)
-- **Severe** alert → 3 beeps (200 ms on / 150 ms off)
+When the NWS reports active alerts for your location, a red banner appears at the top of **every screen**, and the piezo buzzer sounds for 5 seconds:
+- **Extreme** alert → rapid pulse bursts (8 × 80 ms on / 40 ms off, 400 ms gap between bursts)
+- **Severe** alert → medium pulse bursts (5 × 120 ms on / 80 ms off, 600 ms gap between bursts)
 
 The buzzer only sounds when the active alert set changes — repeated 5-minute fetches of the same alert are silent. The banner auto-hides when no active alerts are found. Non-US coordinates return no alerts gracefully.
 
@@ -311,28 +310,6 @@ Shows games for your two configured NBA teams over the next 7 days, grouped by d
 
 > **Requires the same Ball Don't Lie API key as NFL** — see [API Key Setup](#api-key-setup) below.
 
-### Joke Screen
-
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│  ⚡ Joke of the Moment                               Updated 2:15 PM     │ h=44
-├──────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│         Setup / question  (white, centered)                              │ h=203
-│                                                                          │
-├──────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│         Punchline  (gold, centered)                                      │ h=203
-│                                                                          │
-├──────────────────────────────────────────────────────────────────────────┤
-│  nav bar                                                                 │ h=30
-└──────────────────────────────────────────────────────────────────────────┘
-```
-
-Displays a random dad joke from the [RapidAPI Dad Jokes API](https://rapidapi.com/KegenGuyll/api/dad-jokes). Two-part jokes show the setup in white at the top and the punchline in gold at the bottom. The "Updated" timestamp in the header ages from grey → orange → red to indicate staleness. Refreshes every 3 hours. No PSRAM usage — text only.
-
-> **Requires a free RapidAPI key with the Dad Jokes API subscribed** — see [API Key Setup](#api-key-setup) below.
-
 ---
 
 ## API Key Setup
@@ -372,24 +349,6 @@ The Forecast screen's ISS strip uses the [N2YO](https://www.n2yo.com) satellite 
 4. Re-build and flash the firmware
 
 Without a key the ISS strip shows a registration reminder.
-
-### Joke — RapidAPI Dad Jokes
-
-The Joke screen uses the [Dad Jokes API](https://rapidapi.com/KegenGuyll/api/dad-jokes) on RapidAPI (free tier). At the 3-hour refresh interval the clock uses ≤ 8 requests/day.
-
-- **Endpoint:** `GET https://dad-jokes.p.rapidapi.com/random/joke`
-- **Required headers:** `x-rapidapi-host: dad-jokes.p.rapidapi.com` and `x-rapidapi-key: YOUR_KEY`
-- Response format: `{"body":[{"setup":"...","punchline":"..."}],"success":true}`
-- All jokes are two-part (setup + punchline)
-
-1. Create a free account at [rapidapi.com](https://rapidapi.com)
-2. Search for **"Dad Jokes"** and subscribe to the free tier
-3. Copy your API key from the RapidAPI dashboard
-4. Paste it into `include/secrets.h`:
-   ```cpp
-   #define RAPIDAPI_JOKE_KEY  "your_key_here"
-   ```
-5. Re-build and flash the firmware
 
 `include/secrets.h` is listed in `.gitignore` — your keys will not be committed if you use git.
 
@@ -435,10 +394,11 @@ The CrowPanel 7" uses an ESP32-S3 RGB parallel panel (`Panel_RGB`). Getting stab
 | `vsync_front_porch = 8` / `pulse = 4` / `back = 8` | `LGFX_Driver.h` | Vertical blanking per Elecrow specification |
 | `Wire.setClock(400000)` | `main.cpp setup()` | GT911 I2C at 400 kHz (fast mode) reduces each touch read from ~1 ms to ~250 µs, well within the blanking window |
 | `LV_COLOR_16_SWAP 1` | `lv_conf.h` | LVGL pre-swaps pixel bytes so `pushImageDMA` raw-copies to the Panel_RGB framebuffer in the correct byte order the LCD_CAM expects |
-| LVGL render buffers in SRAM | `main.cpp` | Two 20-line (32 KB) SRAM buffers keep CPU compositing off the PSRAM bus; only the final `pushImageDMA` touches PSRAM |
+| LVGL render buffer in SRAM | `main.cpp` | One 10-line (16 KB) DMA-capable SRAM buffer keeps CPU compositing off the PSRAM bus; only the final `pushImageDMA` touches PSRAM |
+| `LV_MEM_CUSTOM 1` (system `malloc`) | `lv_conf.h` | LVGL widget memory (~95 KB measured) comes from the heap. Static-pool isolation was tested and rejected: 64 KB internal boot-loops (pool exhausted mid screen creation), 160 KB internal starves SSL handshakes (-32512). A PSRAM pool via `LV_MEM_POOL_ALLOC` remains an untested option — see comment in `lv_conf.h` |
 | Per-scanline `startWrite/endWrite` in flush | `main.cpp disp_flush()` | ESP32-S3 D-cache = 32 KB = exact size of one LVGL flush strip. Without `endWrite()` the D-cache is never flushed to PSRAM and the vsync double-buffer swap never fires. Per-row pairs limit each PSRAM writeback burst to ~1.6 KB (25 cache lines) and keep `display()` flip flag set each row (boolean — idempotent). See full history in [Display Jitter Troubleshooting](#display-jitter-troubleshooting) |
 | `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096` | `sdkconfig.defaults` | Keeps non-SSL `malloc()` allocations ≤4 KB in internal SRAM to reduce PSRAM bus traffic during WiFi and JSON activity. WiFi/LwIP use explicit `MALLOC_CAP_INTERNAL\|DMA` and are unaffected. Larger allocations (ArduinoJson, HTTPClient) go to PSRAM. |
-| `static StaticJsonDocument<N>` in API files | all `*_api.h` | JSON parse documents allocated in BSS (internal SRAM) — no heap, no PSRAM bus traffic during JSON parsing |
+| Shared `g_json_doc` parse buffer | `json_buf.h` | One 8 KB BSS document (internal SRAM) shared by all `*_api.h` fetchers — replaces seven per-file buffers (16.4 KB), saving ~8 KB; no heap, no PSRAM bus traffic during JSON parsing |
 | `LV_THEME_DEFAULT_TRANSITION_TIME 0` | `lv_conf.h` | Disables LVGL press/focus animations that generate continuous flush calls |
 | `LV_THEME_DEFAULT_GROW 0` | `lv_conf.h` | Disables grow-on-press effect for the same reason |
 
@@ -452,7 +412,7 @@ Horizontal jitter on this board has three distinct sources, each requiring a sep
 |---|---|---|
 | **D-cache burst on flush** | Jitter on every button/keyboard press | Per-scanline `startWrite/endWrite` in `disp_flush()` — limits each PSRAM burst to ~1.6 KB |
 | **WiFi/LwIP DMA during connect & downloads** | Jitter on startup and while fetching data | `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096` in `sdkconfig.defaults` — keeps non-SSL `malloc()` allocations in internal SRAM |
-| **ArduinoJson heap in PSRAM** | Jitter while parsing JSON responses | `static StaticJsonDocument<N>` in all `*_api.h` files — BSS segment = internal SRAM |
+| **ArduinoJson heap in PSRAM** | Jitter while parsing JSON responses | Shared `g_json_doc` static buffer (`json_buf.h`) — BSS segment = internal SRAM |
 
 ### Approaches that did NOT work
 
@@ -494,7 +454,6 @@ The News screen fetches `https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en` 
 | Weather alerts | [NWS API](https://api.weather.gov/alerts/active) | No | HTTPS, US only; fetches event, headline, severity, urgency, response level, description, onset/expires times |
 | NFL schedule & scores | [Ball Don't Lie](https://www.balldontlie.io) | **Free key** | HTTPS; `/nfl/v1/games` filtered by date |
 | NBA schedule & scores (2 configurable teams) | [Ball Don't Lie](https://www.balldontlie.io) | **Same key as NFL** | HTTPS; `/v1/games` filtered by configurable `team_ids[]` + date range |
-| Random joke | [RapidAPI Dad Jokes](https://rapidapi.com/KegenGuyll/api/dad-jokes) | **Free RapidAPI key** | HTTPS; always two-part (setup + punchline) |
 
 ### Update Intervals
 
@@ -510,7 +469,6 @@ The News screen fetches `https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en` 
 | ISS pass times | Every 6 hours |
 | NFL schedule | Every 1 hour |
 | NBA schedule (2 configurable teams) | Every 1 hour |
-| Joke | Every 3 hours |
 | NTP re-sync | Every 1 hour |
 
 ---
@@ -546,7 +504,6 @@ cd smart-clock/SmartClockProject
 # Add your API keys to include/secrets.h:
 #   BALLDONTLIE_API_KEY  — Ball Don't Lie NFL/NBA API (balldontlie.io)
 #   N2YO_API_KEY         — ISS pass predictions       (n2yo.com)
-#   RAPIDAPI_JOKE_KEY    — RapidAPI Dad Jokes          (rapidapi.com)
 
 # Full clean build (required on first build or after sdkconfig.defaults changes)
 pio run --target clean
@@ -602,7 +559,8 @@ SmartClockProject/
     ├── prefs_mgr.h          # NVS persistence (WiFi, ZIP, city, UTC offset, brightness, stock symbols/names, NBA team IDs)
     ├── rtc_bm8563.h         # BM8563 hardware RTC driver (I2C 0x51, battery-backed, PCF8563-compatible)
     ├── backlight.h          # Software brightness (bswap16-aware RGB565 pixel scaling in disp_flush)
-    ├── buzzer.h             # Piezo buzzer via STC8H I2C 0x30 (0xF6=ON, 0xF7=OFF, buzzer_beep())
+    ├── buzzer.h             # Piezo buzzer via STC8H I2C 0x30 (0xF6=ON, 0xF7=OFF, buzzer_beep(), buzzer_alert_pulse())
+    ├── json_buf.h           # Shared 8 KB JSON parse buffer (BSS) used by all *_api.h fetchers
     ├── weather_api.h        # Zippopotam geocode + Open-Meteo weather + 5-day forecast + UV; persistent TLS client
     ├── moon.h               # Moon phase calculation (local, no network)
     ├── iss_api.h            # ISS visible pass times via N2YO API
@@ -611,7 +569,6 @@ SmartClockProject/
     ├── stock_api.h          # Yahoo Finance chart API — one HTTPS request per symbol
     ├── nfl_api.h            # Ball Don't Lie NFL games fetch & parser
     ├── nba_api.h            # Ball Don't Lie NBA games fetch & parser (Lakers + Warriors)
-    ├── joke_api.h           # RapidAPI Dad Jokes — fetch & parse setup/punchline
     ├── ui_setup.h           # Setup screen: two tabs — (1) WiFi/ZIP/brightness, (2) configurable stocks & NBA teams
     ├── ui_main.h            # Main clock screen (weather + 6-stock market panel + UTC)
     │                        #   also defines _create_nav_bar() shared by all screens
@@ -621,7 +578,6 @@ SmartClockProject/
     ├── ui_hourly.h          # 3-day hourly charts (temp, wind, precip) with auto-scroll
     ├── ui_nfl.h             # NFL schedule screen (scrollable game list, 7-day window)
     ├── ui_nba.h             # NBA schedule screen — Lakers & Warriors, 7-day window
-    ├── ui_joke.h            # Joke screen — setup panel + punchline panel + staleness indicator
     ├── ui_alert.h           # Alert banner on lv_layer_top() (appears above all screens, clickable)
     └── ui_alert_overlay.h   # Alert detail modal (600×340 px, centered overlay) with prev/next navigation
 ```
@@ -650,7 +606,6 @@ static const char* STOCK_NAMES_DEFAULT[STOCK_COUNT] = {
 #define ISS_UPDATE_MS       ( 6UL * 60 * 60 * 1000)  //  6 hours
 #define NFL_UPDATE_MS       (60UL * 60 * 1000)       //  1 hour
 #define NBA_UPDATE_MS       (60UL * 60 * 1000)       //  1 hour
-#define JOKE_UPDATE_MS      ( 3UL * 60 * 60 * 1000)  //  3 hours
 #define NTP_SYNC_MS         (60UL * 60 * 1000)       //  1 hour
 
 // News feed locale (in news_api.h)
@@ -687,13 +642,12 @@ static const char* STOCK_NAMES_DEFAULT[STOCK_COUNT] = {
 | Gold/Silver show N/A | Futures market closed or API issue | GC=F / SI=F are COMEX futures; unavailable on some weekends |
 | Alert banner not appearing | Non-US location or no active alerts | NWS covers US only; 404 treated as "no alerts" (no error shown) |
 | Clock shows "⚠ WiFi offline" on boot | WiFi credentials saved but network unreachable | Device retries automatically every 30 s; check SSID/password in Setup if it never connects |
-| ISS always shows "No visible passes in next 3 days" | N2YO API URL had trailing slash bug (fixed) or all passes below 20° elevation | Reflash firmware; if still empty, ISS genuinely has no passes clearing 20° at your location in the next 3 days |
+| ISS always shows "No visible passes in next 3 days" | N2YO sends `Transfer-Encoding: chunked`, which `http.getStream()` does not decode — ArduinoJson silently parsed the chunk-size line and returned an empty doc (fixed via `http.useHTTP10(true)`); also `maxEl` is a float and needs a float default with `\|` | Fixed in firmware; if still empty, check serial for per-pass `[ISS] pass maxEl=` lines — no lines means the API returned zero passes; lines below 20° mean all passes are filtered by the elevation threshold |
 | ISS strip shows reminder | N2YO API key not set | Add key and re-flash |
 | NFL shows setup reminder | BDL API key not set | Add key and re-flash |
 | NFL game times wrong | Timezone mismatch | Weather fetch must complete first to set UTC offset |
 | NBA shows setup reminder | BDL API key not set | Same key used for both NFL and NBA; add key and re-flash |
 | NBA shows no games | Off-season or no upcoming games | NBA regular season runs Oct–Jun; returns empty list in off-season |
-| Joke screen shows "Loading joke…" | Key not set, not subscribed, or fetch failed | Add `RAPIDAPI_JOKE_KEY` to `secrets.h`, subscribe to Dad Jokes on RapidAPI, and re-flash; check `[JOKE]` serial log |
 | NBA game times wrong | Timezone mismatch | Same as NFL — weather fetch sets UTC offset |
 | SRAM alloc failed on boot | Insufficient free internal SRAM | Check serial; `[LVGL] SRAM allocation failed` |
 | WiFi scan finds no networks | Mode conflict | `on_scan_networks()` sets `WIFI_STA` before scan; ensure no concurrent mode change |
@@ -716,7 +670,6 @@ Enable verbose serial output by opening a monitor at **115200 baud** (`pio devic
 | `[ISS]` | ISS pass time fetch |
 | `[NFL]` | NFL schedule fetch |
 | `[NBA]` | NBA schedule fetch |
-| `[JOKE]` | Joke fetch |
 | `[LVGL]` | LVGL init errors |
 
 ---
@@ -737,8 +690,6 @@ Enable verbose serial output by opening a monitor at **115200 baud** (`pio devic
 - **RTC battery** — The BM8563's backup battery maintains time when the board is unpowered. If the battery is depleted, the VL flag is set and the driver falls back to NTP sync on next WiFi connection.
 - **Panel_RGB DMA / jitter** — Three root causes fully diagnosed and fixed: D-cache burst (per-scanline flush), WiFi/LwIP PSRAM contention (`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096`), and ArduinoJson heap in PSRAM (`static StaticJsonDocument`). See [Display Jitter Troubleshooting](#display-jitter-troubleshooting).
 - **Google News RSS locale** — The feed is fixed to `en-US`. To target a different country or language, change the `hl=`, `gl=`, and `ceid=` parameters in `GOOGLE_NEWS_RSS` in `src/news_api.h`.
-- **Joke API** — Uses RapidAPI Dad Jokes (free tier). All jokes are two-part (setup + punchline). Requires a free RapidAPI account and subscribing to the Dad Jokes API separately from the key itself.
-
 ---
 
 ## License

@@ -21,6 +21,7 @@
 #include <time.h>
 #include "config.h"
 #include "secrets.h"   // BALLDONTLIE_API_KEY
+#include "json_buf.h"
 
 #define NFL_MAX_GAMES 32
 
@@ -76,7 +77,9 @@ static bool fetchNfl(NflData& nd, int utc_offset_sec) {
         return false;
     }
 
-    String url = String(BALLDONTLIE_NFL_BASE) + "?per_page=100";
+    // 7 × "&dates[]=YYYY-MM-DD" (21 chars each) after base + "?per_page=100"
+    char url[256];
+    int ulen = snprintf(url, sizeof(url), "%s?per_page=100", BALLDONTLIE_NFL_BASE);
     struct tm day_tm = today;
     for (int d = 0; d < 7; d++) {
         if (d > 0) {
@@ -85,12 +88,11 @@ static bool fetchNfl(NflData& nd, int utc_offset_sec) {
         }
         char date_buf[12];
         strftime(date_buf, sizeof(date_buf), "%Y-%m-%d", &day_tm);
-        url += "&dates[]=";
-        url += date_buf;
+        ulen += snprintf(url + ulen, sizeof(url) - ulen, "&dates[]=%s", date_buf);
     }
 
     // ── HTTP request ───────────────────────────────────────────────────────
-    Serial.printf("[NFL] URL: %s\n", url.c_str());
+    Serial.printf("[NFL] URL: %s\n", url);
 
     WiFiClientSecure client;
     client.setInsecure();   // public API; no cert pinning needed
@@ -123,8 +125,8 @@ static bool fetchNfl(NflData& nd, int utc_offset_sec) {
     filter["data"][0]["visitor_team_score"]           = true;
     filter["data"][0]["home_team_score"]              = true;
 
-    // static → BSS segment (internal SRAM), not heap/PSRAM.
-    static StaticJsonDocument<2048> doc; doc.clear();
+    // Shared BSS parse buffer (json_buf.h) — internal SRAM, no heap/PSRAM.
+    auto& doc = g_json_doc; doc.clear();
     DeserializationError err = deserializeJson(doc, body,
                                                DeserializationOption::Filter(filter));
     if (err) {
