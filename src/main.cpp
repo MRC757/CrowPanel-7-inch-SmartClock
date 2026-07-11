@@ -422,11 +422,13 @@ static void do_alerts_fetch() {
         // Only buzz when a new Extreme/Severe alert set arrives (h changed to non-zero).
         if (h != 0 && h != last_alert_hash) {
             if (has_extreme) {
-                Serial.println("[BUZZER] Extreme alert — 5 beeps");
-                buzzer_beep(5, 150, 100);
+                // Extreme: 8 rapid pulses (80ms on / 40ms off) → 400ms gap, for 5 s
+                Serial.println("[BUZZER] Extreme alert — 5 s pulsing");
+                buzzer_alert_pulse(80, 40, 8, 400, 5000);
             } else {
-                Serial.println("[BUZZER] Severe alert — 3 beeps");
-                buzzer_beep(3, 200, 150);
+                // Severe: 5 medium pulses (120ms on / 80ms off) → 600ms gap, for 5 s
+                Serial.println("[BUZZER] Severe alert — 5 s pulsing");
+                buzzer_alert_pulse(120, 80, 5, 600, 5000);
             }
         }
         last_alert_hash = h;

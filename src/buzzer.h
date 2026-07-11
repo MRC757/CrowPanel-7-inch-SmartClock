@@ -48,3 +48,43 @@ static void buzzer_beep(int count, int on_ms, int off_ms) {
         }
     }
 }
+
+// 5-second pulsing alert — groups rapid on/off pulses into bursts separated by
+// a short gap, then repeats until total_ms elapses.  Keeps LVGL alive throughout.
+// pulse_on  : buzzer-on time per pulse (ms)
+// pulse_off : silence between pulses within a burst (ms)
+// burst_len : pulses per burst before the burst gap
+// burst_gap : silence between bursts (ms)
+// total_ms  : total alert duration (ms)
+static void buzzer_alert_pulse(int pulse_on, int pulse_off,
+                                int burst_len, int burst_gap,
+                                unsigned long total_ms) {
+    unsigned long start = millis();
+    int pulse_in_burst = 0;
+
+    while (millis() - start < total_ms) {
+        // ON phase
+        buzzer_on();
+        unsigned long t = millis();
+        while (millis() - t < (unsigned long)pulse_on) {
+            if (millis() - start >= total_ms) { buzzer_off(); return; }
+            lv_timer_handler();
+            delay(5);
+        }
+        buzzer_off();
+        pulse_in_burst++;
+
+        // Choose gap: burst_gap after a full burst, pulse_off between pulses
+        bool burst_done = (pulse_in_burst >= burst_len);
+        int gap = burst_done ? burst_gap : pulse_off;
+        if (burst_done) pulse_in_burst = 0;
+
+        t = millis();
+        while (millis() - t < (unsigned long)gap) {
+            if (millis() - start >= total_ms) return;
+            lv_timer_handler();
+            delay(5);
+        }
+    }
+    buzzer_off();
+}

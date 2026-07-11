@@ -22,7 +22,16 @@
 /*=========================
    MEMORY SETTINGS
  =========================*/
-/* Use system malloc (goes to PSRAM on ESP32 when PSRAM is enabled) */
+/* Use system malloc (LVGL allocations ≤4 KB land in internal SRAM via
+ * SPIRAM_MALLOC_ALWAYSINTERNAL) — the proven-stable configuration.
+ *
+ * NOTE — static-pool experiments (2026-07): LV_MEM_CUSTOM=0 was tried to fence
+ * LVGL churn away from the mbedTLS heap. Measured: screen creation needs
+ * ~95 KB. A 64 KB internal pool boot-looped (exhausted mid-creation); 160 KB
+ * internal starved SSL handshakes (-32512, only ~60 KB heap left). A PSRAM
+ * pool (LV_MEM_ADR=0 + LV_MEM_POOL_ALLOC(heap_caps_malloc(MALLOC_CAP_SPIRAM)))
+ * is supported by lv_mem.c and remains an untested option — render-speed and
+ * display-jitter impact on the RGB panel unknown. */
 #define LV_MEM_CUSTOM 1
 #if LV_MEM_CUSTOM == 0
     #define LV_MEM_SIZE (64U * 1024U)

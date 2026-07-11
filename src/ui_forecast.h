@@ -290,20 +290,19 @@ inline void ui_forecast_update_iss(const IssData& id) {
         return;
     }
 
-    String text = "";
+    char text[128];
+    int len = 0;
     for (int i = 0; i < id.count; i++) {
-        if (i > 0) text += "   |   ";
         struct tm tm_info;
         localtime_r(&id.passes[i].risetime, &tm_info);
         char tbuf[20];
         strftime(tbuf, sizeof(tbuf), "%a %I:%M %p", &tm_info);
         if (tbuf[4] == '0') memmove(tbuf + 4, tbuf + 5, strlen(tbuf + 5) + 1);
-        text += tbuf;
-        text += " (";
-        text += String(id.passes[i].duration / 60);
-        text += "m)";
+        len += snprintf(text + len, sizeof(text) - len, "%s%s (%dm)",
+                        (i > 0) ? "   |   " : "",
+                        tbuf, id.passes[i].duration / 60);
     }
-    lv_label_set_text(_fcast_iss_lbl, text.c_str());
+    lv_label_set_text(_fcast_iss_lbl, text);
 }
 
 // ─── Refresh staleness color on navigation ────────────────────────────────────

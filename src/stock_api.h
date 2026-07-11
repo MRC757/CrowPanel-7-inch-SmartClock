@@ -15,6 +15,7 @@
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
 #include "config.h"
+#include "json_buf.h"
 
 struct StockInfo {
     char  symbol[12];        // e.g. "^GSPC"
@@ -62,7 +63,8 @@ static bool fetchStockChart(WiFiClientSecure& client, const char* symbol, StockI
     filter["chart"]["result"][0]["meta"]["regularMarketPreviousClose"] = true;
     filter["chart"]["result"][0]["meta"]["previousClose"]              = true;
 
-    static StaticJsonDocument<512> doc;
+    // Shared BSS parse buffer (json_buf.h) — internal SRAM, no heap/PSRAM.
+    auto& doc = g_json_doc;
 
     bool parsed = false;
     for (int attempt = 0; attempt < 2; attempt++) {

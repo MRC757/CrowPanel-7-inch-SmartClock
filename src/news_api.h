@@ -7,7 +7,7 @@
 // Parses   : <item><title>…</title></item> — up to NEWS_MAX_HEADLINES items
 // No API key required; no rate limit.
 //
-// Streaming XML parse: reads character data with readStringUntil() so the
+// Streaming XML parse: reads character data into fixed stack buffers so the
 // full response body is never buffered into a single heap allocation.
 // CDATA sections (<![CDATA[…]]>) are handled for feeds that use them.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -124,6 +124,42 @@ static void _decodeEntities(char* s) {
     *w = '\0';
 }
 
+// ─── Fixed-buffer stream readers (no heap String churn) ──────────────────────
+// Reads until 'delim' (consumed, not stored), disconnect, or 8 s idle timeout.
+// Stores up to cap-1 chars NUL-terminated in buf; counts ALL chars consumed so
+// the caller can apply the same oversize checks the String version used.
+// 'found' reports whether the delimiter was actually reached.
+static size_t _readUntilChar(WiFiClient& s, char delim, char* buf, size_t cap,
+                              bool& found) {
+    size_t total = 0, n = 0;
+    unsigned long last_rx = millis();
+    found = false;
+    while (millis() - last_rx < 8000UL) {
+        int c = s.read();
+        if (c < 0) {
+            if (!s.connected() && !s.available()) break;
+            delay(2);
+            continue;
+        }
+        last_rx = millis();
+        if ((char)c == delim) { found = true; break; }
+        total++;
+        if (n < cap - 1) buf[n++] = (char)c;
+    }
+    buf[n] = '\0';
+    return total;
+}
+
+// Trim leading/trailing whitespace in place.
+static void _trimInPlace(char* s) {
+    char* p = s;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    size_t len = strlen(p);
+    while (len > 0 && (p[len-1] == ' '  || p[len-1] == '\t' ||
+                       p[len-1] == '\r' || p[len-1] == '\n')) p[--len] = '\0';
+    if (p != s) memmove(s, p, len + 1);
+}
+
 // ─── Fetch top headlines from Google News RSS ─────────────────────────────────
 static bool fetchNews(NewsData& nd) {
     nd.count = 0;
@@ -145,31 +181,38 @@ static bool fetchNews(NewsData& nd) {
     }
 
     WiFiClient& stream = http.getStream();
-    stream.setTimeout(8000);  // 8 s per readStringUntil call
 
     // State machine: find <item>, then capture text between <title></title>.
+    // Fixed stack buffers — zero heap allocation during the parse.
     enum { SEEK_ITEM, IN_ITEM, IN_TITLE } state = SEEK_ITEM;
+    char text_buf[NEWS_HEADLINE_LEN + 1];
+    char tag_buf[336];   // fits "![CDATA[" + 128-char headline + "]]" with room
+    bool found;
 
     while (nd.count < NEWS_MAX_HEADLINES) {
         // Read text content up to the next '<'
-        String text = stream.readStringUntil('<');
-        if (!stream.connected() && text.length() == 0) break;
-        if (text.length() > NEWS_HEADLINE_LEN) text = "";  // oversized inter-tag text — discard
+        size_t text_len = _readUntilChar(stream, '<', text_buf,
+                                          sizeof(text_buf), found);
+        if (!found) break;                                 // stream dead or idle
+        if (text_len > NEWS_HEADLINE_LEN) text_buf[0] = '\0';  // oversized — discard
 
         // Read tag (or CDATA marker) up to the closing '>'
-        String tag = stream.readStringUntil('>');
-        if (tag.length() == 0) break;
-        if (tag.length() > 512) continue;  // malformed/oversized tag — skip
+        size_t tag_len = _readUntilChar(stream, '>', tag_buf,
+                                         sizeof(tag_buf), found);
+        if (!found || tag_len == 0) break;
+        if (tag_len > 512) continue;  // malformed/oversized tag — skip
 
         // ── CDATA section: <![CDATA[text]]> ──────────────────────────────
-        // 'tag' here contains everything between '<' and '>', so for a CDATA
+        // 'tag_buf' holds everything between '<' and '>', so for a CDATA
         // block that is "![CDATA[title text]]".
-        if (tag.startsWith("![CDATA[") && state == IN_TITLE) {
-            String val = tag.substring(8);               // strip "![CDATA["
-            if (val.endsWith("]]")) val.remove(val.length() - 2);
-            val.trim();
-            if (val.length() > 0) {
-                strlcpy(nd.headlines[nd.count], val.c_str(), NEWS_HEADLINE_LEN);
+        if (state == IN_TITLE && strncmp(tag_buf, "![CDATA[", 8) == 0) {
+            char* val = tag_buf + 8;                       // strip "![CDATA["
+            size_t vlen = strlen(val);
+            if (vlen >= 2 && val[vlen-2] == ']' && val[vlen-1] == ']')
+                val[vlen-2] = '\0';
+            _trimInPlace(val);
+            if (val[0]) {
+                strlcpy(nd.headlines[nd.count], val, NEWS_HEADLINE_LEN);
                 _utf8ToAscii(nd.headlines[nd.count]);
                 _decodeEntities(nd.headlines[nd.count]);
                 nd.count++;
@@ -180,16 +223,16 @@ static bool fetchNews(NewsData& nd) {
 
         // ── Normal XML tag ───────────────────────────────────────────────
         // Drop any attributes: "item isPermaLink=…" → "item"
-        int sp = tag.indexOf(' ');
-        String name = (sp > 0) ? tag.substring(0, sp) : tag;
+        char* sp = strchr(tag_buf, ' ');
+        if (sp) *sp = '\0';
 
-        if      (name == "item")                         { state = IN_ITEM;  }
-        else if (name == "/item")                        { state = SEEK_ITEM; }
-        else if (name == "title"   && state == IN_ITEM)  { state = IN_TITLE; }
-        else if (name == "/title"  && state == IN_TITLE) {
-            text.trim();
-            if (text.length() > 0) {
-                strlcpy(nd.headlines[nd.count], text.c_str(), NEWS_HEADLINE_LEN);
+        if      (strcmp(tag_buf, "item")   == 0)                     { state = IN_ITEM;  }
+        else if (strcmp(tag_buf, "/item")  == 0)                     { state = SEEK_ITEM; }
+        else if (strcmp(tag_buf, "title")  == 0 && state == IN_ITEM) { state = IN_TITLE; }
+        else if (strcmp(tag_buf, "/title") == 0 && state == IN_TITLE) {
+            _trimInPlace(text_buf);
+            if (text_buf[0]) {
+                strlcpy(nd.headlines[nd.count], text_buf, NEWS_HEADLINE_LEN);
                 _utf8ToAscii(nd.headlines[nd.count]);
                 _decodeEntities(nd.headlines[nd.count]);
                 nd.count++;

@@ -25,6 +25,7 @@
 #include <time.h>
 #include "config.h"
 #include "secrets.h"   // BALLDONTLIE_API_KEY
+#include "json_buf.h"
 
 #define NBA_MAX_GAMES 20
 
@@ -117,8 +118,8 @@ static bool fetchNba(NbaData& nd, int utc_offset_sec, int team1_id, int team2_id
     filter["data"][0]["visitor_team"]["abbreviation"] = true;
     filter["data"][0]["home_team"]["abbreviation"]    = true;
 
-    // static → BSS segment (internal SRAM), not heap/PSRAM.
-    static StaticJsonDocument<2048> doc; doc.clear();
+    // Shared BSS parse buffer (json_buf.h) — internal SRAM, no heap/PSRAM.
+    auto& doc = g_json_doc; doc.clear();
     DeserializationError err = deserializeJson(doc, body,
                                                DeserializationOption::Filter(filter));
     if (err) {

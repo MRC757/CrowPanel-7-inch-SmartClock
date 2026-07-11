@@ -13,6 +13,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include "config.h"
+#include "json_buf.h"
 
 // ─── 5-day daily forecast entry ───────────────────────────────────────────
 #define FORECAST_DAYS  5
@@ -111,7 +112,8 @@ static bool fetchGeocode(const char* zip, WeatherData& wd) {
     client.setInsecure();
 
     HTTPClient http;
-    String url = String(ZIPPOPOTAM_BASE) + zip;
+    char url[96];
+    snprintf(url, sizeof(url), "%s%s", ZIPPOPOTAM_BASE, zip);
     http.begin(client, url);
     http.setTimeout(8000);
     int code = http.GET();
@@ -123,7 +125,7 @@ static bool fetchGeocode(const char* zip, WeatherData& wd) {
         return false;
     }
 
-    static StaticJsonDocument<512> doc;
+    auto& doc = g_json_doc;
     doc.clear();
     DeserializationError err = deserializeJson(doc, http.getStream());
     http.end();
@@ -160,18 +162,19 @@ static bool fetchOpenMeteo(WeatherData& wd) {
     // Request current weather + 5-day daily forecast.
     // timezone=auto lets Open-Meteo pick the right timezone from coordinates.
     // NOTE: current_weather= is deprecated; use current= with explicit field names.
-    String url = String(OPEN_METEO_BASE)
-        + "?latitude="  + String(wd.latitude,  4)
-        + "&longitude=" + String(wd.longitude, 4)
-        + "&current=temperature_2m,relative_humidity_2m,apparent_temperature,wind_speed_10m,weather_code"
-        + "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,uv_index_max,sunrise,sunset"
-        + "&hourly=temperature_2m,wind_speed_10m,precipitation_probability"
-        + "&temperature_unit=fahrenheit"
-        + "&wind_speed_unit=mph"
-        + "&precipitation_unit=inch"
-        + "&timezone=auto"
-        + "&forecast_days=5"
-        + "&forecast_hours=72";
+    char url[512];
+    snprintf(url, sizeof(url),
+        "%s?latitude=%.4f&longitude=%.4f"
+        "&current=temperature_2m,relative_humidity_2m,apparent_temperature,wind_speed_10m,weather_code"
+        "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,uv_index_max,sunrise,sunset"
+        "&hourly=temperature_2m,wind_speed_10m,precipitation_probability"
+        "&temperature_unit=fahrenheit"
+        "&wind_speed_unit=mph"
+        "&precipitation_unit=inch"
+        "&timezone=auto"
+        "&forecast_days=5"
+        "&forecast_hours=72",
+        OPEN_METEO_BASE, wd.latitude, wd.longitude);
 
     HTTPClient http;
     http.begin(client, url);
@@ -217,9 +220,8 @@ static bool fetchOpenMeteo(WeatherData& wd) {
     filter["hourly"]["wind_speed_10m"]              = true;
     filter["hourly"]["precipitation_probability"]   = true;
 
-    // static → BSS segment (internal SRAM), not heap/PSRAM.
-    // doc.clear() resets the document state before each use.
-    static StaticJsonDocument<8192> doc; doc.clear();
+    // Shared BSS parse buffer (json_buf.h) — internal SRAM, no heap/PSRAM.
+    auto& doc = g_json_doc; doc.clear();
     DeserializationError err = deserializeJson(doc, body,
                                                DeserializationOption::Filter(filter));
 
