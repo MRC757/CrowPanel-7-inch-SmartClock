@@ -1,6 +1,6 @@
 # Smart Clock
 
-A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI ESP32-S3** *(SKU: DIS02170A, V1.3)* (800×480 IPS touchscreen). Displays local time, weather, 5-day forecast, 3-day hourly charts, market data, live breaking news, ISS pass times, weather alerts, NFL scores, and NBA scores for any two configurable teams — with automatic night dimming, audible severe-weather alerts, and configurable stock symbols and NBA teams via the on-screen setup.
+A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI ESP32-S3** *(SKU: DIS02170A, V1.3)* (800×480 IPS touchscreen). Displays local time, weather, 5-day forecast, 3-day hourly charts, market data, live breaking news, ISS pass times, weather alerts, NFL scores, NBA scores for any two configurable teams, and user-defined countdowns — with automatic night dimming, audible severe-weather alerts, and configurable stock symbols and NBA teams via the on-screen setup.
 
 ![Smart Clock Layout](docs/layout.png)
 > *(screenshot placeholder — add your own after first boot)*
@@ -27,11 +27,12 @@ A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI 
 | **News** | Google News RSS — up to 12 top US breaking headlines, refreshed every 30 minutes; no API key required |
 | **NFL Schedule** | Next 7 days of NFL games: teams, kickoff time, live scores, final scores |
 | **NBA Schedule** | Next 7 days of games for any two configurable NBA teams: tip-off time, live quarter scores, final scores, postponements; team-color accent strip per row |
+| **Countdown** | Up to 4 user-defined countdowns — title (on-screen keyboard) + target Month/Day; always counts down to the next occurrence, rolling to next year automatically once it passes; live "N DAYS" / "TODAY!" readout; stored in NVS flash, no network required |
 | **Auto Night Dim** | Display automatically dims at sunset and brightens at sunrise; configurable brightness |
 | **Hardware Watchdog** | 30-second ESP32 task watchdog resets the device if the main loop hangs in a stalled HTTP connection |
 | **Touch Setup** | Two-tab setup screen: Tab 1 — WiFi credentials, ZIP code, WiFi scanner, brightness slider; Tab 2 — configurable stock symbols/names and NBA team selection |
-| **Multi-screen** | Setup · Clock · News · Stocks · Daily Forecast · Hourly · NFL · NBA; tap nav bar to switch |
-| **Persistent settings** | WiFi + ZIP + night brightness + stock symbols + NBA team IDs stored in NVS flash; auto-reconnects on boot |
+| **Multi-screen** | Setup · Clock · News · Stocks · Daily Forecast · Hourly · NFL · NBA · Countdown; tap nav bar to switch |
+| **Persistent settings** | WiFi + ZIP + night brightness + stock symbols + NBA team IDs + countdown titles/dates stored in NVS flash; auto-reconnects on boot |
 | **Offline Mode** | If WiFi is unavailable at boot, the clock screen stays up showing an amber "⚠ WiFi offline — reconnecting..." indicator; reconnect is retried automatically every 30 seconds; full data load resumes on reconnect |
 | **Stale Data Indicators** | "Updated" timestamps on weather, stocks, and news screens age from gray → orange (2× update interval) → red (4× update interval) so stale data is always visible |
 
@@ -310,6 +311,27 @@ Shows games for your two configured NBA teams over the next 7 days, grouped by d
 
 > **Requires the same Ball Don't Lie API key as NFL** — see [API Key Setup](#api-key-setup) below.
 
+### Countdown Screen
+
+Up to 4 fully user-configurable countdowns — no API, no network. Each row shows the title, its target Month/Day, and a live "N days" readout; tapping the row opens a popup editor with a title field and a Month/Day roller picker. There is no year to pick — every countdown always counts down to the **next occurrence** of that month/day, automatically rolling forward to next year once the date has passed for the current year. There is no "N days ago" state.
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│  🔔  Countdown  (tap a row to edit)                                     │
+├──────────────────────────────────────────────────────────────────────────┤
+│  Anniversary                                                42 DAYS     │
+│  Jan 15                                                                 │
+├──────────────────────────────────────────────────────────────────────────┤
+│  Tap to set up a countdown...                                           │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Tap a row** to open the editor: title textarea (on-screen keyboard) + Month/Day rollers + Save/Cancel. The popup is created only while open and destroyed on close — kept intentionally lightweight so the screen's idle widget footprint doesn't compete with SSL handshakes for internal SRAM (see [Display Stability Notes](#display-stability-notes))
+- **Date** — Month/Day rollers only, shown on the row once set (e.g. "Jan 15"); the Day roller automatically adjusts its range for the selected month (28–31 days, leap-year aware) and clamps the selection if needed
+- **Readout** — `N DAYS` (cyan) counting down to the next occurrence, `TODAY!` (green) on the day itself
+- **Empty title = inactive** — a row with no title shows a placeholder and no date/day count regardless of what date is set; nothing displays until you name it
+- All data is stored in NVS flash — no internet connection required for this screen to function
+
 ---
 
 ## API Key Setup
@@ -556,7 +578,7 @@ SmartClockProject/
 │
 └── src/
     ├── main.cpp             # setup(), loop(), WiFi, NTP, fetch orchestration, BM8563 RTC sync, 30 s task watchdog
-    ├── prefs_mgr.h          # NVS persistence (WiFi, ZIP, city, UTC offset, brightness, stock symbols/names, NBA team IDs)
+    ├── prefs_mgr.h          # NVS persistence (WiFi, ZIP, city, UTC offset, brightness, stock symbols/names, NBA team IDs, countdown titles/dates)
     ├── rtc_bm8563.h         # BM8563 hardware RTC driver (I2C 0x51, battery-backed, PCF8563-compatible)
     ├── backlight.h          # Software brightness (bswap16-aware RGB565 pixel scaling in disp_flush)
     ├── buzzer.h             # Piezo buzzer via STC8H I2C 0x30 (0xF6=ON, 0xF7=OFF, buzzer_beep(), buzzer_alert_pulse())
@@ -578,6 +600,7 @@ SmartClockProject/
     ├── ui_hourly.h          # 3-day hourly charts (temp, wind, precip) with auto-scroll
     ├── ui_nfl.h             # NFL schedule screen (scrollable game list, 7-day window)
     ├── ui_nba.h             # NBA schedule screen — Lakers & Warriors, 7-day window
+    ├── ui_countdown.h       # Countdown screen — 4 user-editable title + date-roller rows, NVS-backed
     ├── ui_alert.h           # Alert banner on lv_layer_top() (appears above all screens, clickable)
     └── ui_alert_overlay.h   # Alert detail modal (600×340 px, centered overlay) with prev/next navigation
 ```
@@ -608,6 +631,10 @@ static const char* STOCK_NAMES_DEFAULT[STOCK_COUNT] = {
 #define NBA_UPDATE_MS       (60UL * 60 * 1000)       //  1 hour
 #define NTP_SYNC_MS         (60UL * 60 * 1000)       //  1 hour
 
+// Countdown — titles/dates are entered on-device and stored in NVS
+#define COUNTDOWN_COUNT       4    // fixed number of countdown slots
+#define COUNTDOWN_TITLE_LEN  32    // max title length incl. null terminator
+
 // News feed locale (in news_api.h)
 // Change hl= (language), gl= (country), ceid= to target a different region
 #define GOOGLE_NEWS_RSS  "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"
@@ -624,7 +651,8 @@ static const char* STOCK_NAMES_DEFAULT[STOCK_COUNT] = {
 | Horizontal shift artifact | Incorrect flush pattern | Verify `disp_flush()` uses per-scanline `startWrite/endWrite` — see [Display Stability Notes](#display-stability-notes) |
 | Screen jitters on touch/button | D-cache burst to PSRAM | Confirm per-scanline `startWrite/endWrite` in `disp_flush()`; no persistent `gfx.startWrite()` in `setup()` |
 | Screen jitters on startup or download | WiFi/JSON PSRAM contention | Confirm `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096` and `static StaticJsonDocument` in all `*_api.h` |
-| All SSL connections fail after extended uptime (`HTTP -1` on stocks and alerts) | mbedTLS SRAM heap fragmented after ~300–400 SSL handshakes (~12 h uptime) — cert-parse fragments persist across WiFi cycles | Three-layer recovery in `main.cpp`: (1) `recover_ssl_heap()` proactively cycles WiFi when free SRAM < 70 KB; (2) if all 6 stock symbols fail, one reactive WiFi cycle + retry; (3) if retry still fails AND free SRAM < 65 KB, call `ESP.restart()` — BM8563 RTC preserves time, NVS preserves credentials, device recovers in ~10 s with a clean heap. WiFi cycling alone does NOT defragment SRAM because mbedTLS cert-parse fragments are independent of WiFi/LwIP state. Persistent TLS clients (weather, stocks, alerts) further reduce handshake frequency by reusing the SSL context across fetches |
+| All SSL connections fail after extended uptime (`HTTP -1` on stocks and alerts) | mbedTLS SRAM heap fragmented after ~300–400 SSL handshakes (~12 h uptime) — cert-parse fragments persist across WiFi cycles | Three-layer recovery in `main.cpp`: (1) `recover_ssl_heap()` proactively cycles WiFi when free SRAM < 70 KB — called at the top of every SSL-heavy fetcher (stocks, alerts, ISS, NFL, NBA), not just stocks; (2) if all 6 stock symbols fail, one reactive WiFi cycle + retry; (3) if retry still fails AND free SRAM < 65 KB, call `ESP.restart()` — BM8563 RTC preserves time, NVS preserves credentials, device recovers in ~10 s with a clean heap. WiFi cycling alone does NOT defragment SRAM because mbedTLS cert-parse fragments are independent of WiFi/LwIP state. Persistent TLS clients (weather, stocks, alerts) further reduce handshake frequency by reusing the SSL context across fetches |
+| ISS/NFL/NBA consistently show `HTTP -1`, even in steady state (not just after 12 h) | Free internal SRAM can plateau in the ~58–60 KB range depending on how many custom screens/widgets are built at boot — below what a fresh TLS handshake needs. `recover_ssl_heap()`'s WiFi cycle does **not** help once this happens: it only releases LwIP/driver buffers, not the mbedTLS cert-parse fragments actually blocking allocation, so free SRAM stays flat across repeated cycles. This was confirmed by observation, not just theory: adding a Calendar feature (later removed) and Countdown screen measurably lowered the baseline free SRAM for the whole boot | No code-level fix currently applied — the durable fix is moving LVGL's widget memory out of internal SRAM entirely (PSRAM-backed pool, `LV_MEM_POOL_ALLOC` in `lv_conf.h`), not yet enabled/tested. Until then, keep custom screens' permanent (non-lazily-created) widget count low — see the Countdown screen's lazy popup-editor pattern in `ui_countdown.h` for the approach that recovered headroom here |
 | Device reboots unexpectedly | HTTP request stalled at TCP layer (server accepts connection but never sends response) | 30-second hardware task watchdog (`esp_task_wdt`) resets the device automatically; fed at the top of every fetch call and inside the stock retry loop |
 | Screen flickers on touch | LVGL theme animations enabled | Confirm `LV_THEME_DEFAULT_TRANSITION_TIME 0` and `LV_THEME_DEFAULT_GROW 0` in `lv_conf.h` |
 | Wrong colors at night brightness | LV_COLOR_16_SWAP not accounted for | Pixel scaler must call `__builtin_bswap16()` before/after channel extraction — see `backlight.h` |
@@ -649,6 +677,10 @@ static const char* STOCK_NAMES_DEFAULT[STOCK_COUNT] = {
 | NBA shows setup reminder | BDL API key not set | Same key used for both NFL and NBA; add key and re-flash |
 | NBA shows no games | Off-season or no upcoming games | NBA regular season runs Oct–Jun; returns empty list in off-season |
 | NBA game times wrong | Timezone mismatch | Same as NFL — weather fetch sets UTC offset |
+| Countdown row shows no day count | Title field is empty | A row is inactive (placeholder only) until it has a title, regardless of what date is set |
+| Countdown never shows a negative/"days ago" count | By design | Every countdown always counts to the next occurrence, rolling to next year automatically once passed — see [Countdown Screen](#countdown-screen) |
+| Countdown "N DAYS" looks off by one | Rare local-noon rounding edge case | Both dates are computed at local noon specifically to avoid this; report if seen consistently |
+| Countdown Feb 29 target shows early/late in non-leap years | No leap-year target date, so it's evaluated against Feb 28 (this year) or the next real Feb 29 | Expected approximation — a Feb 29 countdown only exists every 4 years |
 | SRAM alloc failed on boot | Insufficient free internal SRAM | Check serial; `[LVGL] SRAM allocation failed` |
 | WiFi scan finds no networks | Mode conflict | `on_scan_networks()` sets `WIFI_STA` before scan; ensure no concurrent mode change |
 

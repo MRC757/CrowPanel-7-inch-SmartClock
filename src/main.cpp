@@ -23,6 +23,7 @@
 #include <Arduino.h>
 
 #include <esp_task_wdt.h>
+#include <esp_sntp.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -56,6 +57,7 @@
 #include "ui_nfl.h"
 #include "nba_api.h"
 #include "ui_nba.h"
+#include "ui_countdown.h"
 
 // GT911 touch controller (TAMC_GT911 via Wire; SDA=15, SCL=16, no IRQ/RST pins)
 static TAMC_GT911 ts(I2C_SDA_PIN, I2C_SCL_PIN, -1, -1, SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -81,6 +83,7 @@ static lv_obj_t* scr_forecast = nullptr;
 static lv_obj_t* scr_hourly   = nullptr;
 static lv_obj_t* scr_nfl      = nullptr;
 static lv_obj_t* scr_nba      = nullptr;
+static lv_obj_t* scr_countdown = nullptr;
 
 // Timing
 static unsigned long last_weather_ms   = 0;
@@ -212,6 +215,10 @@ void navigateTo(int screenId) {
             target = scr_nba;
             ui_nba_tick();
             break;
+        case SCR_COUNTDOWN:
+            target = scr_countdown;
+            ui_countdown_refresh(&g_prefs);
+            break;
         default: return;
     }
     if (target) {
@@ -307,6 +314,18 @@ static void ntp_sync() {
             }
         }
     }
+
+    // configTime() leaves ESP-IDF's SNTP client running a periodic background
+    // re-sync (its own lwIP-thread DNS callback) indefinitely. We already
+    // manage re-sync ourselves via a periodic ntp_sync() call every
+    // NTP_SYNC_MS, so that background client serves no purpose here — and its
+    // DNS callback can fire concurrently with our own HTTPS DNS lookups
+    // (e.g. the weather geocode fetch immediately following), racing on the
+    // lwIP TCP/IP core lock with no protection. Observed as:
+    //   "assert failed: udp_new_ip_type ... Required to lock TCPIP core
+    //    functionality!" — a hard crash/reboot. Stopping the client here
+    //   removes the race entirely.
+    if (esp_sntp_enabled()) esp_sntp_stop();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -388,6 +407,8 @@ static void do_stocks_fetch() {
 static void do_iss_fetch() {
     esp_task_wdt_reset();
     if (!wifi_connected || g_weather.latitude == 0.0f) return;
+    recover_ssl_heap();   // ISS runs late in the fetch sequence — guard against accumulated fragmentation
+    if (!wifi_connected) return;
     Serial.println("[ISS] Fetching visible pass times...");
     fetchIss(g_weather.latitude, g_weather.longitude, g_iss);
     ui_forecast_update_iss(g_iss);
@@ -439,6 +460,8 @@ static void do_alerts_fetch() {
 static void do_nfl_fetch() {
     esp_task_wdt_reset();
     if (!wifi_connected) return;
+    recover_ssl_heap();   // NFL runs late in the fetch sequence — guard against accumulated fragmentation
+    if (!wifi_connected) return;
     Serial.println("[NFL] Fetching NFL schedule...");
     if (fetchNfl(g_nfl, g_prefs.utc_offset_sec)) {
         ui_nfl_update(g_nfl);
@@ -448,6 +471,8 @@ static void do_nfl_fetch() {
 
 static void do_nba_fetch() {
     esp_task_wdt_reset();
+    if (!wifi_connected) return;
+    recover_ssl_heap();   // NBA runs late in the fetch sequence — guard against accumulated fragmentation
     if (!wifi_connected) return;
     Serial.println("[NBA] Fetching NBA schedule...");
     if (fetchNba(g_nba, g_prefs.utc_offset_sec, g_prefs.nba_team1_id, g_prefs.nba_team2_id)) {
@@ -736,6 +761,7 @@ void setup() {
     scr_hourly   = ui_hourly_create();
     scr_nfl      = ui_nfl_create();
     scr_nba      = ui_nba_create();
+    scr_countdown = ui_countdown_create(&g_prefs);
     ui_alert_init();           // floating banner on lv_layer_top(), above all screens
     ui_alert_overlay_init();   // modal overlay for detailed alert info
 
@@ -745,6 +771,8 @@ void setup() {
     bool have_creds = prefs_load(g_prefs);
     // Pre-fill setup screen with any saved values
     ui_setup_refresh(&g_prefs);
+    // Sync countdown widgets (screen was built before prefs were loaded)
+    ui_countdown_refresh(&g_prefs);
 
     // Restore time from BM8563 hardware RTC.  The battery-backed RTC keeps
     // accurate local time across power cycles — no NVS epoch fallback needed.
