@@ -23,6 +23,15 @@ struct AppPrefs {
     // Configurable NBA teams (Ball Don't Lie team IDs; defaults Lakers=14, Warriors=10)
     int  nba_team1_id;
     int  nba_team2_id;
+
+    // Countdown events (set via Countdown screen). Always counts down to the
+    // NEXT occurrence of month/day (rolling to next year once it has passed
+    // this year) — no year is stored. countdown_month[i] == 0 means "not yet
+    // configured" — the UI shows a placeholder and defaults the date picker
+    // to today until the user sets a title and/or changes the date.
+    char   countdown_title[COUNTDOWN_COUNT][COUNTDOWN_TITLE_LEN];
+    int8_t countdown_month[COUNTDOWN_COUNT];   // 0 = unset, else 1-12
+    int8_t countdown_day  [COUNTDOWN_COUNT];   // 1-31
 };
 
 static Preferences _nvs;
@@ -54,6 +63,17 @@ inline bool prefs_load(AppPrefs& p) {
     p.nba_team1_id = _nvs.getInt("nba_t1", 14);
     p.nba_team2_id = _nvs.getInt("nba_t2", 10);
 
+    // Countdown events: default title empty, month 0 (== "not configured").
+    for (int i = 0; i < COUNTDOWN_COUNT; i++) {
+        char key[12];
+        snprintf(key, sizeof(key), "cd%d_t", i);
+        _nvs.getString(key, p.countdown_title[i], sizeof(p.countdown_title[i]));
+        snprintf(key, sizeof(key), "cd%d_m", i);
+        p.countdown_month[i] = (int8_t)_nvs.getInt(key, 0);
+        snprintf(key, sizeof(key), "cd%d_d", i);
+        p.countdown_day[i]   = (int8_t)_nvs.getInt(key, 1);
+    }
+
     _nvs.end();
     return strlen(p.wifi_ssid) > 0;
 }
@@ -78,6 +98,17 @@ inline void prefs_save(const AppPrefs& p) {
 
     _nvs.putInt("nba_t1", p.nba_team1_id);
     _nvs.putInt("nba_t2", p.nba_team2_id);
+
+    for (int i = 0; i < COUNTDOWN_COUNT; i++) {
+        char key[12];
+        snprintf(key, sizeof(key), "cd%d_t", i);
+        _nvs.putString(key, p.countdown_title[i]);
+        snprintf(key, sizeof(key), "cd%d_m", i);
+        _nvs.putInt(key, p.countdown_month[i]);
+        snprintf(key, sizeof(key), "cd%d_d", i);
+        _nvs.putInt(key, p.countdown_day[i]);
+    }
+
     _nvs.end();
 }
 
@@ -111,6 +142,17 @@ inline void prefs_save_stock(int idx, const char* symbol, const char* name) {
     _nvs.begin("smartclock", /*readOnly=*/false);
     _nvs.putString(sym_key, symbol);
     _nvs.putString(nam_key, name);
+    _nvs.end();
+}
+
+// Save one countdown entry (called on title defocus or date roller change).
+inline void prefs_save_countdown(int idx, const char* title, int month, int day) {
+    if (idx < 0 || idx >= COUNTDOWN_COUNT) return;
+    char key[12];
+    _nvs.begin("smartclock", /*readOnly=*/false);
+    snprintf(key, sizeof(key), "cd%d_t", idx); _nvs.putString(key, title);
+    snprintf(key, sizeof(key), "cd%d_m", idx); _nvs.putInt(key, month);
+    snprintf(key, sizeof(key), "cd%d_d", idx); _nvs.putInt(key, day);
     _nvs.end();
 }
 
