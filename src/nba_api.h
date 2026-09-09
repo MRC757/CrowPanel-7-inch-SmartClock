@@ -26,6 +26,7 @@
 #include "config.h"
 #include "secrets.h"   // BALLDONTLIE_API_KEY
 #include "json_buf.h"
+#include "balldontlie.h"   // shared keep-alive TLS client (NFL + NBA)
 
 #define NBA_MAX_GAMES 20
 
@@ -91,25 +92,24 @@ static bool fetchNba(NbaData& nd, int utc_offset_sec, int team1_id, int team2_id
     Serial.printf("[NBA] URL: %s\n", url);
 
     // ── HTTP request ───────────────────────────────────────────────────────
-    WiFiClientSecure client;
-    client.setInsecure();
+    // Reuse the keep-alive session NFL just opened to the same host — no second
+    // handshake, no second ~16 KB mbedTLS allocation (balldontlie.h).  Shared
+    // HTTPClient instance: a local one's destructor would close the socket.
+    WiFiClientSecure& client = bdl_client();
+    HTTPClient&       http   = bdl_http();
 
-    HTTPClient http;
+    http.setReuse(true);
     http.begin(client, (const char*)url);
     http.setTimeout(15000);
     http.addHeader("Authorization", BALLDONTLIE_API_KEY);
 
     int code = http.GET();
-    Serial.printf("[NBA] HTTP %d  size=%d\n", code, http.getSize());
+    int clen = (int)http.getSize();          // -1 ⇒ chunked
+    Serial.printf("[NBA] HTTP %d  size=%d\n", code, clen);
     if (code != 200) {
-        http.end();
-        client.stop();
+        bdl_release();
         return false;
     }
-
-    String body = http.getString();
-    http.end();
-    client.stop();
 
     // ── Parse JSON (minimal filter: teams + dates only) ───────────────────
     StaticJsonDocument<256> filter;
@@ -118,10 +118,16 @@ static bool fetchNba(NbaData& nd, int utc_offset_sec, int team1_id, int team2_id
     filter["data"][0]["visitor_team"]["abbreviation"] = true;
     filter["data"][0]["home_team"]["abbreviation"]    = true;
 
+    // Stream straight off the socket through the filter — no full-body heap
+    // String. BlockingStream (json_buf.h) waits across TLS-record gaps and
+    // strips chunked framing.
+    BlockingStream stream(client, clen, /*chunked=*/clen < 0);
+
     // Shared BSS parse buffer (json_buf.h) — internal SRAM, no heap/PSRAM.
     auto& doc = g_json_doc; doc.clear();
-    DeserializationError err = deserializeJson(doc, body,
+    DeserializationError err = deserializeJson(doc, stream,
                                                DeserializationOption::Filter(filter));
+    bdl_release();   // NBA is last in the round — free the shared TLS session
     if (err) {
         Serial.printf("[NBA] JSON err: %s\n", err.c_str());
         return false;

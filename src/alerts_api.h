@@ -56,7 +56,7 @@ static bool fetchAlerts(float lat, float lon, AlertsData& ad) {
     snprintf(url, sizeof(url), "https://api.weather.gov/alerts/active?point=%.4f,%.4f", lat, lon);
 
     if (!_alerts_client_ready) {
-        _alerts_client.setInsecure();
+        ssl_prepare(_alerts_client);
         _alerts_client_ready = true;
     }
 

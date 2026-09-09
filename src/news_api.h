@@ -15,6 +15,7 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include "config.h"
+#include "json_buf.h"   // ssl_prepare()
 
 #define GOOGLE_NEWS_RSS \
     "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"
@@ -166,7 +167,7 @@ static bool fetchNews(NewsData& nd) {
     nd.valid = false;
 
     WiFiClientSecure client;
-    client.setInsecure();
+    ssl_prepare(client);
     HTTPClient http;
     http.begin(client, GOOGLE_NEWS_RSS);
     http.setTimeout(20000);

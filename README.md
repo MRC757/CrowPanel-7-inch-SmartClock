@@ -445,8 +445,57 @@ Horizontal jitter on this board has three distinct sources, each requiring a sep
 | Removed `endWrite()` entirely (no start, no end) | No D-cache flush, no buffer swap; user reported this made jitter **worse** |
 | `CONFIG_LCD_RGB_BOUNCE_BUFFER_SIZE` build flag | No effect — LovyanGFX uses its own GDMA, not the Espressif `esp_lcd_panel_rgb` driver |
 | Upgrading LVGL to 8.3.11 | Not a cause; version difference has no impact on jitter |
-| `CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y` in `sdkconfig.defaults` | **Causes boot crash** — this is a compile-time option baked into the pre-compiled Arduino-ESP32 mbedTLS library. Setting it via `sdkconfig.defaults` creates a configuration conflict that triggers interrupt WDT timeout on boot. SSL heap exhaustion is instead handled by three layers: (1) `recover_ssl_heap()` proactively cycles WiFi when free SRAM < 70 KB; (2) `do_stocks_fetch()` reactively cycles WiFi + retries if all 6 symbols fail; (3) `ESP.restart()` if retry still fails and free SRAM < 65 KB — BM8563 RTC preserves time and the device recovers in ~10 s with a clean heap. HTTP keep-alive further reduces handshake frequency (1 per batch instead of 6). |
-| `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384 / 8192 / 4096` (threshold tuning) | mbedTLS calls `heap_caps_calloc(MALLOC_CAP_INTERNAL)` directly — it **completely bypasses** the `SPIRAM_MALLOC_ALWAYSINTERNAL` threshold. Threshold tuning alone has no effect on SSL heap exhaustion; the real fix is `recover_ssl_heap()` + HTTP keep-alive. |
+| `CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y` in `sdkconfig.defaults` | **Causes boot crash** — this is a compile-time option baked into the pre-compiled Arduino-ESP32 mbedTLS library. Setting it via `sdkconfig.defaults` creates a configuration conflict that triggers interrupt WDT timeout on boot. SSL heap exhaustion is instead handled by: (1) streaming + filtering JSON straight off the socket so a fetch never holds the whole response (see [HTTP Fetch & SSL Memory Optimization](#http-fetch--ssl-memory-optimization)); (2) `recover_ssl_heap()` cycles WiFi *after* a fetch fails; (3) `do_stocks_fetch()` reactively cycles WiFi + retries if all 6 symbols fail; (4) `ESP.restart()` if retry still fails and free SRAM < 65 KB — BM8563 RTC preserves time and the device recovers in ~10 s with a clean heap. NFL + NBA also share one keep-alive TLS session (one handshake for the pair). |
+| `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384 / 8192 / 4096` (threshold tuning) | mbedTLS calls `heap_caps_calloc(MALLOC_CAP_INTERNAL)` directly — it **completely bypasses** the `SPIRAM_MALLOC_ALWAYSINTERNAL` threshold. Threshold tuning alone has no effect on SSL heap exhaustion. |
+| `client.setBufferSizes(4096, 512)` to shrink the 16 KB mbedTLS RX buffer | **Not available on this core** — `NetworkClientSecure` exposes no such method and `MBEDTLS_SSL_IN_CONTENT_LEN` is compiled into the pre-built framework. Would require an ESP-IDF-framework build. |
+| HTTP/1.1 keep-alive across the 6 Yahoo Finance stock requests | Yahoo sends `Connection: close` and drops the socket. The reuse attempt hits a dead connection → `-29312` on the 2nd symbol, then falls back to a fresh handshake anyway. Strictly worse — reverted. (Keep-alive **does** work for NFL/NBA — Cloudflare honors it.) |
+| Shared `WiFiClientSecure` alone for keep-alive (without sharing the `HTTPClient`) | `~HTTPClient()` calls `_client->stop()` unconditionally, so a local `HTTPClient` closes the shared socket when it goes out of scope. The `HTTPClient` instance must be shared too. |
+
+---
+
+## HTTP Fetch & SSL Memory Optimization
+
+The `-32512` ("SSL - Memory allocation failed") failures come from one place: every
+new TLS handshake needs a ~16 KB **contiguous** internal-SRAM block for the mbedTLS
+input buffer, and once free SRAM is fragmented (steady state on this board is
+~57–60 KB free, spread across smaller blocks) that allocation fails. The fixes
+below attack the two things that make it worse — large transient allocations
+*during* a fetch, and the sheer *number* of handshakes.
+
+### What worked
+
+| Change | Effect | Where |
+|---|---|---|
+| **Stream + filter JSON straight off the socket** instead of `http.getString()` | NFL response went from a ~15 KB heap `String` (one big contiguous alloc, on top of mbedTLS) to **2.8 KB** in the shared `g_json_doc`. This was the direct cause of the intermittent "NFL won't update" once the season filled `data[]` with a full week of games. | `BlockingStream` in `json_buf.h`; `nfl_api.h`, `nba_api.h` |
+| **`BlockingStream` waits out TLS-record gaps** | ArduinoJson's byte-at-a-time reader treats a momentary `read() == -1` between TLS records as end-of-input and silently truncates. The wrapper blocks until the body is genuinely complete. | `json_buf.h` |
+| **`BlockingStream` also strips `Transfer-Encoding: chunked`** | Cloudflare (balldontlie) chunks its responses and `http.getStream()` does **not** decode chunking. Previously worked around with `http.useHTTP10(true)`; that had to go because HTTP/1.0 forces `Connection: close` and kills keep-alive. The stream now parses the hex chunk-size lines itself (framing picked from `http.getSize()`: `-1` ⇒ chunked). | `json_buf.h` |
+| **Reactive `recover_ssl_heap()`** — cycle WiFi only *after* a fetch fails | It used to run before every stocks/ISS/alerts/NFL/NBA fetch. Once the steady-state baseline settled below its 70 KB trigger, that meant a full ~2 s WiFi teardown/reconnect before *every* fetch, every round, with free SRAM barely moving. Pure tax. | `main.cpp` |
+| **NFL + NBA share one keep-alive TLS session** | Both hit `api.balldontlie.io` back-to-back. NBA now reuses NFL's live connection — **no second handshake, no second 16 KB allocation**. This is what stopped NBA (last fetch in the round) from taking a `-32512` on nearly every boot. | `balldontlie.h` |
+
+### The `~HTTPClient()` gotcha
+
+A shared `WiFiClientSecure` is **not enough** for keep-alive. `~HTTPClient()` calls
+`_client->stop()` **unconditionally** — no keep-alive check — so a local
+`HTTPClient http;` inside a fetch function hard-closes the shared socket the moment
+it goes out of scope. Keep-alive only works if the **`HTTPClient` instance is also
+shared** and outlives both fetches. `balldontlie.h` holds a file-scope
+`static HTTPClient` for exactly this reason.
+
+> The "persistent TLS session" comments that used to be in `stock_api.h` /
+> `alerts_api.h` were aspirational for the same reason — their per-request local
+> `HTTPClient` stopped the socket every time. Only the `setInsecure()` config
+> actually persisted, never the connection.
+
+### Keep-alive only helps servers that honor it
+
+| Host | Honors HTTP/1.1 keep-alive? | Result |
+|---|---|---|
+| `api.balldontlie.io` (Cloudflare) | **Yes** | NFL → NBA reuse works; one handshake for the pair |
+| `query2.finance.yahoo.com` | **No** — sends `Connection: close`, drops the socket | Reuse attempt hits a dead connection → `-29312` ("connection indicated EOF") on the 2nd symbol, then falls back to a fresh handshake. Tried and **reverted** — strictly worse than 6 clean handshakes. |
+
+Stocks therefore still does one handshake per symbol (6 per round). The durable
+fix for that churn is moving LVGL's widget memory off internal SRAM (PSRAM pool,
+`LV_MEM_POOL_ALLOC`), not keep-alive.
 
 ---
 
@@ -468,14 +517,14 @@ The News screen fetches `https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en` 
 |---|---|---|---|
 | Time | NTP (`pool.ntp.org`) | No | UTC offset auto-detected from ZIP; DST-aware |
 | ZIP → coordinates | [api.zippopotam.us](https://api.zippopotam.us) | No | US ZIP codes only |
-| Weather, forecast, UV, sunrise/sunset | [Open-Meteo](https://open-meteo.com) | No | Single request returns all current + daily data; persistent TLS session reused across hourly fetches |
+| Weather, forecast, UV, sunrise/sunset | [Open-Meteo](https://open-meteo.com) | No | Single request returns all current + daily data (16 KB TLS records — buffered to a `String`, not streamed) |
 | Moon phase | Calculated locally | — | Synodic period formula; no network required |
 | News | [Google News RSS](https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en) | No | RSS 2.0 XML; top US breaking headlines; no rate limit |
-| Stocks | Yahoo Finance chart API (v8, per-symbol) | No | 6 sequential HTTPS requests; `chartPreviousClose` used for index/futures % change |
+| Stocks | Yahoo Finance chart API (v8, per-symbol) | No | 6 sequential HTTPS requests, one TLS handshake each (Yahoo sends `Connection: close`); `chartPreviousClose` used for index/futures % change |
 | ISS pass times | [N2YO](https://www.n2yo.com) visual passes API | **Free key** | HTTPS; NORAD ID 25544 (ISS); minimum 30 s pass duration (server-side); passes with peak elevation < 20° filtered client-side |
 | Weather alerts | [NWS API](https://api.weather.gov/alerts/active) | No | HTTPS, US only; fetches event, headline, severity, urgency, response level, description, onset/expires times |
-| NFL schedule & scores | [Ball Don't Lie](https://www.balldontlie.io) | **Free key** | HTTPS; `/nfl/v1/games` filtered by date |
-| NBA schedule & scores (2 configurable teams) | [Ball Don't Lie](https://www.balldontlie.io) | **Same key as NFL** | HTTPS; `/v1/games` filtered by configurable `team_ids[]` + date range |
+| NFL schedule & scores | [Ball Don't Lie](https://www.balldontlie.io) | **Free key** | HTTPS; `/nfl/v1/games` filtered by date; streamed + filtered off the socket |
+| NBA schedule & scores (2 configurable teams) | [Ball Don't Lie](https://www.balldontlie.io) | **Same key as NFL** | HTTPS; `/v1/games` filtered by configurable `team_ids[]` + date range; reuses NFL's keep-alive TLS session |
 
 ### Update Intervals
 
@@ -582,15 +631,16 @@ SmartClockProject/
     ├── rtc_bm8563.h         # BM8563 hardware RTC driver (I2C 0x51, battery-backed, PCF8563-compatible)
     ├── backlight.h          # Software brightness (bswap16-aware RGB565 pixel scaling in disp_flush)
     ├── buzzer.h             # Piezo buzzer via STC8H I2C 0x30 (0xF6=ON, 0xF7=OFF, buzzer_beep(), buzzer_alert_pulse())
-    ├── json_buf.h           # Shared 8 KB JSON parse buffer (BSS) used by all *_api.h fetchers
-    ├── weather_api.h        # Zippopotam geocode + Open-Meteo weather + 5-day forecast + UV; persistent TLS client
+    ├── json_buf.h           # Shared 8 KB JSON parse buffer (BSS) + BlockingStream (streams/dechunks JSON off the socket) + ssl_prepare()
+    ├── balldontlie.h        # Shared keep-alive WiFiClientSecure + HTTPClient for NFL & NBA (one handshake for the pair)
+    ├── weather_api.h        # Zippopotam geocode + Open-Meteo weather + 5-day forecast + UV
     ├── moon.h               # Moon phase calculation (local, no network)
     ├── iss_api.h            # ISS visible pass times via N2YO API
     ├── alerts_api.h         # NWS active weather alerts
     ├── news_api.h           # Google News RSS fetch & XML streaming parser (top US headlines)
-    ├── stock_api.h          # Yahoo Finance chart API — one HTTPS request per symbol
-    ├── nfl_api.h            # Ball Don't Lie NFL games fetch & parser
-    ├── nba_api.h            # Ball Don't Lie NBA games fetch & parser (Lakers + Warriors)
+    ├── stock_api.h          # Yahoo Finance chart API — one HTTPS request (+ handshake) per symbol
+    ├── nfl_api.h            # Ball Don't Lie NFL games — streamed + filtered; opens the shared keep-alive session
+    ├── nba_api.h            # Ball Don't Lie NBA games (Lakers + Warriors) — reuses NFL's keep-alive session
     ├── ui_setup.h           # Setup screen: two tabs — (1) WiFi/ZIP/brightness, (2) configurable stocks & NBA teams
     ├── ui_main.h            # Main clock screen (weather + 6-stock market panel + UTC)
     │                        #   also defines _create_nav_bar() shared by all screens
@@ -651,7 +701,7 @@ static const char* STOCK_NAMES_DEFAULT[STOCK_COUNT] = {
 | Horizontal shift artifact | Incorrect flush pattern | Verify `disp_flush()` uses per-scanline `startWrite/endWrite` — see [Display Stability Notes](#display-stability-notes) |
 | Screen jitters on touch/button | D-cache burst to PSRAM | Confirm per-scanline `startWrite/endWrite` in `disp_flush()`; no persistent `gfx.startWrite()` in `setup()` |
 | Screen jitters on startup or download | WiFi/JSON PSRAM contention | Confirm `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096` and `static StaticJsonDocument` in all `*_api.h` |
-| All SSL connections fail after extended uptime (`HTTP -1` on stocks and alerts) | mbedTLS SRAM heap fragmented after ~300–400 SSL handshakes (~12 h uptime) — cert-parse fragments persist across WiFi cycles | Three-layer recovery in `main.cpp`: (1) `recover_ssl_heap()` proactively cycles WiFi when free SRAM < 70 KB — called at the top of every SSL-heavy fetcher (stocks, alerts, ISS, NFL, NBA), not just stocks; (2) if all 6 stock symbols fail, one reactive WiFi cycle + retry; (3) if retry still fails AND free SRAM < 65 KB, call `ESP.restart()` — BM8563 RTC preserves time, NVS preserves credentials, device recovers in ~10 s with a clean heap. WiFi cycling alone does NOT defragment SRAM because mbedTLS cert-parse fragments are independent of WiFi/LwIP state. Persistent TLS clients (weather, stocks, alerts) further reduce handshake frequency by reusing the SSL context across fetches |
+| All SSL connections fail after extended uptime (`HTTP -1` on stocks and alerts) | mbedTLS SRAM heap fragmented after ~300–400 SSL handshakes (~12 h uptime) — cert-parse fragments persist across WiFi cycles | Recovery in `main.cpp`: (1) `recover_ssl_heap()` cycles WiFi **only after a fetch fails** (it used to run before every fetch — pure tax once the baseline sat below its 70 KB trigger); (2) if all 6 stock symbols fail, one reactive WiFi cycle + retry; (3) if retry still fails AND free SRAM < 65 KB, call `ESP.restart()` — BM8563 RTC preserves time, NVS preserves credentials, device recovers in ~10 s with a clean heap. WiFi cycling alone does NOT defragment SRAM because mbedTLS cert-parse fragments are independent of WiFi/LwIP state. The bigger levers are streaming JSON off the socket and NFL/NBA keep-alive — see [HTTP Fetch & SSL Memory Optimization](#http-fetch--ssl-memory-optimization) |
 | ISS/NFL/NBA consistently show `HTTP -1`, even in steady state (not just after 12 h) | Free internal SRAM can plateau in the ~58–60 KB range depending on how many custom screens/widgets are built at boot — below what a fresh TLS handshake needs. `recover_ssl_heap()`'s WiFi cycle does **not** help once this happens: it only releases LwIP/driver buffers, not the mbedTLS cert-parse fragments actually blocking allocation, so free SRAM stays flat across repeated cycles. This was confirmed by observation, not just theory: adding a Calendar feature (later removed) and Countdown screen measurably lowered the baseline free SRAM for the whole boot | No code-level fix currently applied — the durable fix is moving LVGL's widget memory out of internal SRAM entirely (PSRAM-backed pool, `LV_MEM_POOL_ALLOC` in `lv_conf.h`), not yet enabled/tested. Until then, keep custom screens' permanent (non-lazily-created) widget count low — see the Countdown screen's lazy popup-editor pattern in `ui_countdown.h` for the approach that recovered headroom here |
 | Device reboots unexpectedly | HTTP request stalled at TCP layer (server accepts connection but never sends response) | 30-second hardware task watchdog (`esp_task_wdt`) resets the device automatically; fed at the top of every fetch call and inside the stock retry loop |
 | Screen flickers on touch | LVGL theme animations enabled | Confirm `LV_THEME_DEFAULT_TRANSITION_TIME 0` and `LV_THEME_DEFAULT_GROW 0` in `lv_conf.h` |
@@ -718,7 +768,7 @@ Enable verbose serial output by opening a monitor at **115200 baud** (`pio devic
 - **NBA during off-season** — BDL returns zero games roughly July–September. The screen shows "No Lakers or Warriors games scheduled" gracefully.
 - **NBA team filter** — The screen shows all games for your two configured teams (default: Lakers ID 14 and Warriors ID 10), including games against other opponents. A matchup between your two configured teams appears as a single row with a gold accent strip. Change teams anytime via Setup → Tab 2.
 - **WiFi scan blocks UI** — `WiFi.scanNetworks()` is synchronous (~2 seconds). Acceptable for one-time setup.
-- **Stock fetches block UI briefly** — 6 HTTP requests over a single shared TLS session (HTTP/1.1 keep-alive); only 1 TLS handshake per batch instead of 6. Occurs only every 5 minutes.
+- **Stock fetches block UI briefly** — 6 sequential HTTPS requests, one TLS handshake each (Yahoo Finance sends `Connection: close`, so keep-alive can't be reused — it was tried and reverted). Occurs only every 5 minutes. NFL + NBA, by contrast, share one keep-alive handshake because Cloudflare honors it.
 - **RTC battery** — The BM8563's backup battery maintains time when the board is unpowered. If the battery is depleted, the VL flag is set and the driver falls back to NTP sync on next WiFi connection.
 - **Panel_RGB DMA / jitter** — Three root causes fully diagnosed and fixed: D-cache burst (per-scanline flush), WiFi/LwIP PSRAM contention (`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096`), and ArduinoJson heap in PSRAM (`static StaticJsonDocument`). See [Display Jitter Troubleshooting](#display-jitter-troubleshooting).
 - **Google News RSS locale** — The feed is fixed to `en-US`. To target a different country or language, change the `hl=`, `gl=`, and `ceid=` parameters in `GOOGLE_NEWS_RSS` in `src/news_api.h`.

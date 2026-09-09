@@ -4,10 +4,12 @@
 //
 // No API key required. Uses the v8/finance/chart/{symbol} endpoint with HTTPS.
 //
-// SSL fix: _stocks_client is a file-scope static that persists across
-// fetchStocks() calls. This means mbedtls_ssl_session_reset() is used on
-// reconnect instead of mbedtls_ssl_setup(), avoiding the alloc/free cycle
-// that fragments SRAM over hundreds of handshakes.
+// SSL note: _stocks_client is a file-scope static so its setInsecure() config
+// is set once.  It does NOT preserve the TLS session between symbols — Yahoo
+// sends Connection: close, and ~HTTPClient() stops the socket regardless — so
+// each of the 6 symbols does its own handshake.  (Keep-alive was tried and
+// removed: Yahoo drops the socket, making the reuse attempt fail with -29312
+// then fall back to a fresh handshake anyway — strictly worse.)
 // ─────────────────────────────────────────────────────────────────────────────
 #include <Arduino.h>
 #include <WiFiClientSecure.h>
@@ -32,8 +34,7 @@ struct StocksData {
     time_t    fetch_time = 0;
 };
 
-// Persistent SSL client — allocated once, never destroyed.
-// Avoids mbedtls_ssl_setup() on every 5-minute fetch; uses session_reset instead.
+// File-scope so setInsecure() is applied once (see SSL note above).
 static WiFiClientSecure _stocks_client;
 static bool             _stocks_client_ready = false;
 
@@ -131,7 +132,7 @@ static bool fetchStocks(StocksData& sd,
                         const char symbols[][12],
                         const char names[][24]) {
     if (!_stocks_client_ready) {
-        _stocks_client.setInsecure();
+        ssl_prepare(_stocks_client);
         _stocks_client_ready = true;
     }
 
@@ -158,8 +159,6 @@ static bool fetchStocks(StocksData& sd,
     }
 
     if (anyNew) {
-        // Keep _stocks_client alive — next call uses mbedtls_ssl_session_reset()
-        // (no context reallocation) instead of mbedtls_ssl_setup() (full alloc).
         sd.fetch_time = time(nullptr);
         sd.valid = true;
     } else {
