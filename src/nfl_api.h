@@ -22,6 +22,7 @@
 #include "config.h"
 #include "secrets.h"   // BALLDONTLIE_API_KEY
 #include "json_buf.h"
+#include "balldontlie.h"   // shared keep-alive TLS client (NFL + NBA)
 
 #define NFL_MAX_GAMES 32
 
@@ -94,25 +95,25 @@ static bool fetchNfl(NflData& nd, int utc_offset_sec) {
     // ── HTTP request ───────────────────────────────────────────────────────
     Serial.printf("[NFL] URL: %s\n", url);
 
-    WiFiClientSecure client;
-    client.setInsecure();   // public API; no cert pinning needed
+    // Shared keep-alive session (balldontlie.h).  The HTTPClient is shared too:
+    // ~HTTPClient() closes the socket unconditionally, so a local instance would
+    // hard-close the connection before NBA could reuse it.  HTTP/1.1 (default)
+    // keeps the socket alive; the chunked body is stripped by BlockingStream.
+    WiFiClientSecure& client = bdl_client();
+    HTTPClient&       http   = bdl_http();
 
-    HTTPClient http;
+    http.setReuse(true);
     http.begin(client, url);
     http.setTimeout(15000);
     http.addHeader("Authorization", BALLDONTLIE_API_KEY);
 
     int code = http.GET();
-    Serial.printf("[NFL] HTTP %d  size=%d\n", code, http.getSize());
+    int clen = (int)http.getSize();          // -1 ⇒ chunked
+    Serial.printf("[NFL] HTTP %d  size=%d\n", code, clen);
     if (code != 200) {
-        http.end();
-        client.stop();
+        bdl_release();   // don't leave a half-open session for NBA to reuse
         return false;
     }
-
-    String body = http.getString();
-    http.end();
-    client.stop();
 
     // ── Parse JSON (filtered to keep only needed fields) ───────────────────
     // 512 bytes — sized generously; undersizing silently corrupts the filter
@@ -125,15 +126,27 @@ static bool fetchNfl(NflData& nd, int utc_offset_sec) {
     filter["data"][0]["visitor_team_score"]           = true;
     filter["data"][0]["home_team_score"]              = true;
 
+    // Stream the response straight off the socket through the filter — only the
+    // six fields above are ever held in RAM.  A full NFL week (~16 games) is
+    // ~15 KB of raw JSON; buffering that into a heap String on top of mbedTLS's
+    // internal-SRAM footprint is what caused the intermittent in-season fetch
+    // failures.  BlockingStream (json_buf.h) waits across TLS-record gaps and
+    // strips the chunked framing.
+    BlockingStream stream(client, clen, /*chunked=*/clen < 0);
+
     // Shared BSS parse buffer (json_buf.h) — internal SRAM, no heap/PSRAM.
     auto& doc = g_json_doc; doc.clear();
-    DeserializationError err = deserializeJson(doc, body,
+    DeserializationError err = deserializeJson(doc, stream,
                                                DeserializationOption::Filter(filter));
+    http.end();   // keeps the socket open for NBA (setReuse + HTTP/1.1)
     if (err) {
         Serial.printf("[NFL] JSON err: %s\n", err.c_str());
+        bdl_release();
         return false;
     }
     Serial.printf("[NFL] JSON ok, doc.mem=%d\n", (int)doc.memoryUsage());
+    if (doc.overflowed())
+        Serial.println("[NFL] WARNING: parse buffer overflowed — game list truncated");
 
     JsonArray data = doc["data"];
     if (data.isNull()) {

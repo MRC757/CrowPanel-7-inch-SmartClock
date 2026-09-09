@@ -45,7 +45,7 @@ static bool fetchIss(float lat, float lon, IssData& id) {
     }
 
     WiFiClientSecure client;
-    client.setInsecure();
+    ssl_prepare(client);
 
     // /visualpasses/25544/{lat}/{lon}/{altM}/{days}/{minVisibility}/&apiKey={key}
     // N2YO requires the trailing slash before &apiKey= — it is part of the path.

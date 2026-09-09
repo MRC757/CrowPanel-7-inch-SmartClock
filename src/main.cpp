@@ -255,7 +255,18 @@ static bool wifi_connect(const char* ssid, const char* pass,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SSL heap recovery — proactive WiFi cycle when SRAM is critically fragmented.
+// SSL heap recovery — REACTIVE WiFi cycle, called only after a fetch fails.
+//
+// Previously this ran before every stocks/iss/alerts/NFL/NBA fetch.  Once the
+// steady-state SRAM baseline settled below the 70 KB trigger (which it now
+// does — see memory: ssl-heap-vs-screen-count), that meant a full WiFi
+// teardown+reconnect (~2 s, WDT-risky) before *every* fetch, every round,
+// with free SRAM barely moving afterward.  Pure tax, no benefit.
+//
+// It is now invoked only when a fetch actually returns failure, to give the
+// next fetch in the same round a chance.  The >= 70 KB early-out also makes it
+// a no-op when a fetch failed with plenty of SRAM free (i.e. a transient
+// network error, not heap exhaustion).
 //
 // Root cause of SSL -32512 ("Memory allocation failed") after ~12 hours uptime:
 //   mbedTLS allocates small structs directly from SRAM via heap_caps_calloc(MALLOC_CAP_INTERNAL),
@@ -370,8 +381,6 @@ static void do_news_fetch() {
 static void do_stocks_fetch() {
     esp_task_wdt_reset();
     if (!wifi_connected) return;
-    recover_ssl_heap();          // proactive: cycle WiFi if SRAM below 70 KB threshold
-    if (!wifi_connected) return;
     Serial.println("[STOCKS] Fetching stocks...");
     if (!fetchStocks(g_stocks, g_prefs.stock_symbols, g_prefs.stock_names)) {
         // All 6 symbols failed — SSL alloc failure due to SRAM heap fragmentation.
@@ -407,10 +416,9 @@ static void do_stocks_fetch() {
 static void do_iss_fetch() {
     esp_task_wdt_reset();
     if (!wifi_connected || g_weather.latitude == 0.0f) return;
-    recover_ssl_heap();   // ISS runs late in the fetch sequence — guard against accumulated fragmentation
-    if (!wifi_connected) return;
     Serial.println("[ISS] Fetching visible pass times...");
-    fetchIss(g_weather.latitude, g_weather.longitude, g_iss);
+    if (!fetchIss(g_weather.latitude, g_weather.longitude, g_iss))
+        recover_ssl_heap();   // reactive: give the next fetch in this round a chance
     ui_forecast_update_iss(g_iss);
     last_iss_ms = millis();
 }
@@ -418,8 +426,6 @@ static void do_iss_fetch() {
 static void do_alerts_fetch() {
     esp_task_wdt_reset();
     if (!wifi_connected || g_weather.latitude == 0.0f) return;
-    recover_ssl_heap();   // defensive: alerts runs right after stocks; guard against same fragmentation
-    if (!wifi_connected) return;
     Serial.println("[ALERTS] Fetching weather alerts...");
     if (fetchAlerts(g_weather.latitude, g_weather.longitude, g_alerts)) {
         ui_alert_update(g_alerts);
@@ -453,6 +459,8 @@ static void do_alerts_fetch() {
             }
         }
         last_alert_hash = h;
+    } else {
+        recover_ssl_heap();   // reactive: give the next fetch in this round a chance
     }
     last_alerts_ms = millis();
 }
@@ -460,11 +468,11 @@ static void do_alerts_fetch() {
 static void do_nfl_fetch() {
     esp_task_wdt_reset();
     if (!wifi_connected) return;
-    recover_ssl_heap();   // NFL runs late in the fetch sequence — guard against accumulated fragmentation
-    if (!wifi_connected) return;
     Serial.println("[NFL] Fetching NFL schedule...");
     if (fetchNfl(g_nfl, g_prefs.utc_offset_sec)) {
         ui_nfl_update(g_nfl);
+    } else {
+        recover_ssl_heap();   // reactive: give the next fetch in this round a chance
     }
     last_nfl_ms = millis();
 }
@@ -472,11 +480,11 @@ static void do_nfl_fetch() {
 static void do_nba_fetch() {
     esp_task_wdt_reset();
     if (!wifi_connected) return;
-    recover_ssl_heap();   // NBA runs late in the fetch sequence — guard against accumulated fragmentation
-    if (!wifi_connected) return;
     Serial.println("[NBA] Fetching NBA schedule...");
     if (fetchNba(g_nba, g_prefs.utc_offset_sec, g_prefs.nba_team1_id, g_prefs.nba_team2_id)) {
         ui_nba_update(g_nba);
+    } else {
+        recover_ssl_heap();   // reactive: give the next fetch in this round a chance
     }
     last_nba_ms = millis();
 }
