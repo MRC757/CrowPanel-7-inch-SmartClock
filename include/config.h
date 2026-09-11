@@ -16,7 +16,6 @@
 // ─── Screen IDs (used by navigateTo()) ────────────────────────────────────────
 #define SCR_SETUP    0
 #define SCR_MAIN     1
-#define SCR_NEWS     2
 #define SCR_STOCKS   3
 #define SCR_FORECAST 4
 #define SCR_NFL      5
@@ -26,7 +25,6 @@
 
 // ─── Data update intervals (milliseconds) ─────────────────────────────────────
 #define WEATHER_UPDATE_MS   (60UL * 60 * 1000)        //  1 hour
-#define NEWS_UPDATE_MS      (30UL * 60 * 1000)        // 30 minutes (Google News RSS — no rate limit)
 #define STOCKS_UPDATE_MS    ( 5UL * 60 * 1000)        //  5 minutes
 #define NTP_SYNC_MS         (60UL * 60 * 1000)        //  1 hour
 #define ISS_UPDATE_MS       ( 6UL * 60 * 60 * 1000)  //  6 hours (passes are predictable)
@@ -48,11 +46,6 @@ static const char* STOCK_SYMBOLS_DEFAULT[STOCK_COUNT] = {
 static const char* STOCK_NAMES_DEFAULT[STOCK_COUNT] = {
     "S&P 500", "DOW JONES", "VYMI", "VYM", "GOLD", "SILVER"
 };
-
-// ─── Google News RSS ──────────────────────────────────────────────────────────
-// URL defined in news_api.h. No API key required.
-#define NEWS_MAX_HEADLINES  12
-#define NEWS_HEADLINE_LEN   128
 
 // ─── Countdown (user-entered titles + target dates, stored in NVS) ────────────
 #define COUNTDOWN_COUNT       4    // fixed number of countdown slots

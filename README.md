@@ -1,6 +1,6 @@
 # Smart Clock
 
-A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI ESP32-S3** *(SKU: DIS02170A, V1.3)* (800×480 IPS touchscreen). Displays local time, weather, 5-day forecast, 3-day hourly charts, market data, live breaking news, ISS pass times, weather alerts, NFL scores, NBA scores for any two configurable teams, and user-defined countdowns — with automatic night dimming, audible severe-weather alerts, and configurable stock symbols and NBA teams via the on-screen setup.
+A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI ESP32-S3** *(SKU: DIS02170A, V1.3)* (800×480 IPS touchscreen). Displays local time, weather, 5-day forecast, 3-day hourly charts, market data, ISS pass times, weather alerts, NFL scores, NBA scores for any two configurable teams, and user-defined countdowns — with automatic night dimming, audible severe-weather alerts, and configurable stock symbols and NBA teams via the on-screen setup.
 
 ![Smart Clock Layout](docs/layout.png)
 > *(screenshot placeholder — add your own after first boot)*
@@ -24,17 +24,16 @@ A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI 
 | **Alert Modal** | Tap the alert banner to view full alert details: color-coded severity badge, full description, and valid time range; navigate between multiple alerts with Previous/Next buttons |
 | **Alert Buzzer** | Piezo buzzer sounds 5 seconds of pulsing audio on new Extreme or Severe alerts — rapid bursts for Extreme, slower for Severe; only fires when the alert set changes |
 | **Market Data** | S&P 500, DOW Jones, VYMI, VYM, Gold (GC=F), Silver (SI=F) — price, change, change % |
-| **News** | Google News RSS — up to 12 top US breaking headlines, refreshed every 30 minutes; no API key required |
 | **NFL Schedule** | Next 7 days of NFL games: teams, kickoff time, live scores, final scores |
 | **NBA Schedule** | Next 7 days of games for any two configurable NBA teams: tip-off time, live quarter scores, final scores, postponements; team-color accent strip per row |
 | **Countdown** | Up to 4 user-defined countdowns — title (on-screen keyboard) + target Month/Day; always counts down to the next occurrence, rolling to next year automatically once it passes; live "N DAYS" / "TODAY!" readout; stored in NVS flash, no network required |
 | **Auto Night Dim** | Display automatically dims at sunset and brightens at sunrise; configurable brightness |
 | **Hardware Watchdog** | 30-second ESP32 task watchdog resets the device if the main loop hangs in a stalled HTTP connection |
 | **Touch Setup** | Two-tab setup screen: Tab 1 — WiFi credentials, ZIP code, WiFi scanner, brightness slider; Tab 2 — configurable stock symbols/names and NBA team selection |
-| **Multi-screen** | Setup · Clock · News · Stocks · Daily Forecast · Hourly · NFL · NBA · Countdown; tap nav bar to switch |
+| **Multi-screen** | Setup · Clock · Stocks · Daily Forecast · Hourly · NFL · NBA · Countdown; tap nav bar to switch |
 | **Persistent settings** | WiFi + ZIP + night brightness + stock symbols + NBA team IDs + countdown titles/dates stored in NVS flash; auto-reconnects on boot |
 | **Offline Mode** | If WiFi is unavailable at boot, the clock screen stays up showing an amber "⚠ WiFi offline — reconnecting..." indicator; reconnect is retried automatically every 30 seconds; full data load resumes on reconnect |
-| **Stale Data Indicators** | "Updated" timestamps on weather, stocks, and news screens age from gray → orange (2× update interval) → red (4× update interval) so stale data is always visible |
+| **Stale Data Indicators** | "Updated" timestamps on weather and stocks screens age from gray → orange (2× update interval) → red (4× update interval) so stale data is always visible |
 
 ---
 
@@ -154,7 +153,7 @@ All settings are remembered across reboots via NVS flash.
 │  Set:    5:52 PM     │                                       │
 │  Moon: Waxing Gibbous│                                       │
 ├──────────────────────┴───────────────────────────────────────┤
-│  ⚙ Setup  🏠 Clock  ≡ News  ≡ Stocks  ~ Daily  ↺ Hourly  ▶ NFL  ↻ NBA  │
+│  ⚙ Setup  🏠 Clock  ≡ Stocks  ~ Daily  ↺ Hourly  ▶ NFL  ↻ NBA          │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -254,9 +253,6 @@ The modal is 600×340 pixels, centered on screen with 100px side margins and 70p
 
 ---
 
-### News Screen
-Full scrollable list of up to 12 breaking headlines from the **Google News RSS** feed (`https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en`). No API key required. Headlines are the current top US stories across all topics. Refreshed every 30 minutes.
-
 ### Stocks Screen
 3×2 card grid with detailed market info for each of the 6 configurable symbols, including absolute price change, percentage change, and market state (Open / Pre-market / After-hours / Closed). Default symbols are S&P 500, DOW, VYMI, VYM, Gold, Silver — change any of them via **Setup → Tab 2**.
 
@@ -279,7 +275,7 @@ Gold and Silver use Yahoo Finance COMEX front-month futures tickers (`GC=F`, `SI
 ├──────────┴──────────┴──────────┴──────────┴───────────────────────────┤
 │  ISS  Thu 7:23 PM (5m)  |  Fri 8:45 AM (3m)  |  Sat 6:12 PM (6m)      │
 ├──────────────────────────────────────────────────────────────────────────┤
-│  ⚙ Setup  🏠 Clock  ≡ News  ≡ Stocks  ~ Forecast  ▶ NFL               │
+│  ⚙ Setup  🏠 Clock  ≡ Stocks  ~ Forecast  ▶ NFL                        │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -335,10 +331,6 @@ Up to 4 fully user-configurable countdowns — no API, no network. Each row show
 ---
 
 ## API Key Setup
-
-### News — Google News RSS
-
-The News screen fetches the [Google News RSS](https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en) feed. **No API key or account required.** The feed URL and locale are defined in `src/news_api.h` as `GOOGLE_NEWS_RSS`.
 
 ### NFL & NBA — Ball Don't Lie
 
@@ -499,18 +491,6 @@ fix for that churn is moving LVGL's widget memory off internal SRAM (PSRAM pool,
 
 ---
 
-## News (Google News RSS)
-
-The News screen fetches `https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en` — a standard RSS 2.0 feed with no authentication, no rate limit, and no account required.
-
-**Parsing:** The firmware uses a streaming XML state machine (`src/news_api.h`) that reads `<item><title>…</title></item>` blocks directly from the HTTP stream without buffering the full response body. Up to 12 headlines are stored.
-
-**Character handling:** Google News sends raw UTF-8 multi-byte sequences for smart quotes (`'` `"`) and dashes (`–` `—`). The `_utf8ToAscii()` pass converts these to their printable ASCII equivalents before the `_decodeEntities()` pass handles any remaining `&amp;`-style XML entities, ensuring clean display on the ASCII font.
-
-**To change the locale/region:** edit `GOOGLE_NEWS_RSS` in `src/news_api.h`. Google News RSS supports `hl=` (language), `gl=` (country), and `ceid=` parameters.
-
----
-
 ## Data Sources
 
 | Data | API | Key Required | Notes |
@@ -519,7 +499,6 @@ The News screen fetches `https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en` 
 | ZIP → coordinates | [api.zippopotam.us](https://api.zippopotam.us) | No | US ZIP codes only |
 | Weather, forecast, UV, sunrise/sunset | [Open-Meteo](https://open-meteo.com) | No | Single request returns all current + daily data (16 KB TLS records — buffered to a `String`, not streamed) |
 | Moon phase | Calculated locally | — | Synodic period formula; no network required |
-| News | [Google News RSS](https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en) | No | RSS 2.0 XML; top US breaking headlines; no rate limit |
 | Stocks | Yahoo Finance chart API (v8, per-symbol) | No | 6 sequential HTTPS requests, one TLS handshake each (Yahoo sends `Connection: close`); `chartPreviousClose` used for index/futures % change |
 | ISS pass times | [N2YO](https://www.n2yo.com) visual passes API | **Free key** | HTTPS; NORAD ID 25544 (ISS); minimum 30 s pass duration (server-side); passes with peak elevation < 20° filtered client-side |
 | Weather alerts | [NWS API](https://api.weather.gov/alerts/active) | No | HTTPS, US only; fetches event, headline, severity, urgency, response level, description, onset/expires times |
@@ -534,7 +513,6 @@ The News screen fetches `https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en` 
 | Weather + forecast + UV + sunrise/sunset | Every 1 hour |
 | Auto night dim check | Every 60 seconds |
 | Weather alerts (+ buzzer if new Extreme/Severe) | Every 5 minutes |
-| News | Every 30 minutes |
 | Stocks (all 6 symbols) | Every 5 minutes |
 | BM8563 RTC updated | After each NTP sync (every 1 hour) |
 | ISS pass times | Every 6 hours |
@@ -637,14 +615,12 @@ SmartClockProject/
     ├── moon.h               # Moon phase calculation (local, no network)
     ├── iss_api.h            # ISS visible pass times via N2YO API
     ├── alerts_api.h         # NWS active weather alerts
-    ├── news_api.h           # Google News RSS fetch & XML streaming parser (top US headlines)
     ├── stock_api.h          # Yahoo Finance chart API — one HTTPS request (+ handshake) per symbol
     ├── nfl_api.h            # Ball Don't Lie NFL games — streamed + filtered; opens the shared keep-alive session
     ├── nba_api.h            # Ball Don't Lie NBA games (Lakers + Warriors) — reuses NFL's keep-alive session
     ├── ui_setup.h           # Setup screen: two tabs — (1) WiFi/ZIP/brightness, (2) configurable stocks & NBA teams
     ├── ui_main.h            # Main clock screen (weather + 6-stock market panel + UTC)
     │                        #   also defines _create_nav_bar() shared by all screens
-    ├── ui_news.h            # Full news list screen
     ├── ui_stocks.h          # Detailed stock cards screen (3×2 grid: S&P, DOW, VYMI, VYM, Gold, Silver)
     ├── ui_forecast.h        # 5-day forecast screen (cards + UV + ISS strip)
     ├── ui_hourly.h          # 3-day hourly charts (temp, wind, precip) with auto-scroll
@@ -674,7 +650,6 @@ static const char* STOCK_NAMES_DEFAULT[STOCK_COUNT] = {
 // Update frequencies (milliseconds)
 #define WEATHER_UPDATE_MS   (60UL * 60 * 1000)       //  1 hour
 #define STOCKS_UPDATE_MS    ( 5UL * 60 * 1000)       //  5 minutes
-#define NEWS_UPDATE_MS      (30UL * 60 * 1000)       // 30 minutes
 #define ALERTS_UPDATE_MS    ( 5UL * 60 * 1000)       //  5 minutes
 #define ISS_UPDATE_MS       ( 6UL * 60 * 60 * 1000)  //  6 hours
 #define NFL_UPDATE_MS       (60UL * 60 * 1000)       //  1 hour
@@ -684,10 +659,6 @@ static const char* STOCK_NAMES_DEFAULT[STOCK_COUNT] = {
 // Countdown — titles/dates are entered on-device and stored in NVS
 #define COUNTDOWN_COUNT       4    // fixed number of countdown slots
 #define COUNTDOWN_TITLE_LEN  32    // max title length incl. null terminator
-
-// News feed locale (in news_api.h)
-// Change hl= (language), gl= (country), ceid= to target a different region
-#define GOOGLE_NEWS_RSS  "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"
 ```
 
 ---
@@ -702,7 +673,7 @@ static const char* STOCK_NAMES_DEFAULT[STOCK_COUNT] = {
 | Screen jitters on touch/button | D-cache burst to PSRAM | Confirm per-scanline `startWrite/endWrite` in `disp_flush()`; no persistent `gfx.startWrite()` in `setup()` |
 | Screen jitters on startup or download | WiFi/JSON PSRAM contention | Confirm `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096` and `static StaticJsonDocument` in all `*_api.h` |
 | All SSL connections fail after extended uptime (`HTTP -1` on stocks and alerts) | mbedTLS SRAM heap fragmented after ~300–400 SSL handshakes (~12 h uptime) — cert-parse fragments persist across WiFi cycles | Recovery in `main.cpp`: (1) `recover_ssl_heap()` cycles WiFi **only after a fetch fails** (it used to run before every fetch — pure tax once the baseline sat below its 70 KB trigger); (2) if all 6 stock symbols fail, one reactive WiFi cycle + retry; (3) if retry still fails AND free SRAM < 65 KB, call `ESP.restart()` — BM8563 RTC preserves time, NVS preserves credentials, device recovers in ~10 s with a clean heap. WiFi cycling alone does NOT defragment SRAM because mbedTLS cert-parse fragments are independent of WiFi/LwIP state. The bigger levers are streaming JSON off the socket and NFL/NBA keep-alive — see [HTTP Fetch & SSL Memory Optimization](#http-fetch--ssl-memory-optimization) |
-| ISS/NFL/NBA consistently show `HTTP -1`, even in steady state (not just after 12 h) | Free internal SRAM can plateau in the ~58–60 KB range depending on how many custom screens/widgets are built at boot — below what a fresh TLS handshake needs. `recover_ssl_heap()`'s WiFi cycle does **not** help once this happens: it only releases LwIP/driver buffers, not the mbedTLS cert-parse fragments actually blocking allocation, so free SRAM stays flat across repeated cycles. This was confirmed by observation, not just theory: adding a Calendar feature (later removed) and Countdown screen measurably lowered the baseline free SRAM for the whole boot | No code-level fix currently applied — the durable fix is moving LVGL's widget memory out of internal SRAM entirely (PSRAM-backed pool, `LV_MEM_POOL_ALLOC` in `lv_conf.h`), not yet enabled/tested. Until then, keep custom screens' permanent (non-lazily-created) widget count low — see the Countdown screen's lazy popup-editor pattern in `ui_countdown.h` for the approach that recovered headroom here |
+| ISS/NFL/NBA/stocks occasionally show `HTTP -1`, even in steady state (not just after 12 h) | Free internal SRAM can plateau in the ~56–60 KB range depending on how many custom screens/widgets are built at boot — below what a fresh TLS handshake needs. `recover_ssl_heap()`'s WiFi cycle does **not** help once this happens: it only releases LwIP/driver buffers, not the mbedTLS cert-parse fragments actually blocking allocation, so free SRAM stays flat across repeated cycles. Confirmed by observation, not just theory: adding a Calendar feature (later removed) and Countdown screen measurably lowered the baseline free SRAM for the whole boot; the News screen (12-entry word-wrapped `lv_list`, the heaviest list screen in the project) was removed for the same reason — freed ~1.5 KB BSS (`g_news`) plus an estimated 5–8 KB of LVGL widget heap and one fewer TLS handshake per 30 min | No code-level fix currently applied for the remaining baseline — the durable fix is moving LVGL's widget memory out of internal SRAM entirely (PSRAM-backed pool, `LV_MEM_POOL_ALLOC` in `lv_conf.h`), not yet enabled/tested. Until then, keep custom screens' permanent (non-lazily-created) widget count low — see the Countdown screen's lazy popup-editor pattern in `ui_countdown.h` for the approach that recovered headroom here |
 | Device reboots unexpectedly | HTTP request stalled at TCP layer (server accepts connection but never sends response) | 30-second hardware task watchdog (`esp_task_wdt`) resets the device automatically; fed at the top of every fetch call and inside the stock retry loop |
 | Screen flickers on touch | LVGL theme animations enabled | Confirm `LV_THEME_DEFAULT_TRANSITION_TIME 0` and `LV_THEME_DEFAULT_GROW 0` in `lv_conf.h` |
 | Wrong colors at night brightness | LV_COLOR_16_SWAP not accounted for | Pixel scaler must call `__builtin_bswap16()` before/after channel extraction — see `backlight.h` |
@@ -748,7 +719,6 @@ Enable verbose serial output by opening a monitor at **115200 baud** (`pio devic
 | `[BUZZER]` | Buzzer events |
 | `[BRIGHT]` | Auto-dim transitions |
 | `[STOCKS]` | Stock data fetch |
-| `[NEWS]` | News fetch |
 | `[ISS]` | ISS pass time fetch |
 | `[NFL]` | NFL schedule fetch |
 | `[NBA]` | NBA schedule fetch |
@@ -771,7 +741,80 @@ Enable verbose serial output by opening a monitor at **115200 baud** (`pio devic
 - **Stock fetches block UI briefly** — 6 sequential HTTPS requests, one TLS handshake each (Yahoo Finance sends `Connection: close`, so keep-alive can't be reused — it was tried and reverted). Occurs only every 5 minutes. NFL + NBA, by contrast, share one keep-alive handshake because Cloudflare honors it.
 - **RTC battery** — The BM8563's backup battery maintains time when the board is unpowered. If the battery is depleted, the VL flag is set and the driver falls back to NTP sync on next WiFi connection.
 - **Panel_RGB DMA / jitter** — Three root causes fully diagnosed and fixed: D-cache burst (per-scanline flush), WiFi/LwIP PSRAM contention (`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096`), and ArduinoJson heap in PSRAM (`static StaticJsonDocument`). See [Display Jitter Troubleshooting](#display-jitter-troubleshooting).
-- **Google News RSS locale** — The feed is fixed to `en-US`. To target a different country or language, change the `hl=`, `gl=`, and `ceid=` parameters in `GOOGLE_NEWS_RSS` in `src/news_api.h`.
+- **No News screen** — removed to reduce internal-SRAM pressure (it was the heaviest LVGL list screen in the project — see [Troubleshooting](#troubleshooting)). Full rebuild spec + restore instructions in [Archived Feature: News Screen](#archived-feature-news-screen-google-news-rss) below.
+---
+
+## Archived Feature: News Screen (Google News RSS)
+
+Removed 2026-09-11 to reduce internal-SRAM pressure — it was the heaviest LVGL
+list screen in the project (12-entry word-wrapped `lv_list`), and was already
+not shown on the main clock screen (`ui_main_update_news()` was a dead stub
+by the time it was removed). Freed roughly:
+
+- ~1.5 KB BSS (`NewsData g_news`)
+- ~5–8 KB of LVGL widget heap (the screen + its populated list)
+- one fewer TLS handshake every 30 minutes (less fragmentation accumulation over uptime)
+
+**To restore on a board with more RAM** (e.g. an ESP32-P4 — 768 KB SRAM vs.
+this board's ~512 KB — or once a PSRAM-backed LVGL pool removes the internal-
+SRAM ceiling): `git checkout 156cb0a -- src/news_api.h src/ui_news.h`
+(last commit with the feature intact) and re-wire it per the spec below —
+the surrounding code (nav bar, screen array, fetch scheduler) has since
+changed shape, so a straight `git revert` of the removal commit will likely
+conflict; re-adding by hand against current `main.cpp`/`ui_main.h` is cleaner.
+
+### What it was
+
+| | |
+|---|---|
+| Endpoint | `https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en` — RSS 2.0 XML, no API key, no rate limit |
+| Config (`config.h`) | `NEWS_MAX_HEADLINES 12`, `NEWS_HEADLINE_LEN 128`, `NEWS_UPDATE_MS` = 30 min |
+| Feed URL/locale (`news_api.h`) | `GOOGLE_NEWS_RSS` — `hl=` language, `gl=` country, `ceid=` region |
+| Data (`news_api.h`) | `struct NewsData { char headlines[NEWS_MAX_HEADLINES][NEWS_HEADLINE_LEN]; int count; bool valid; }` |
+| Screen ID | `SCR_NEWS` in `config.h`'s screen-ID enum; nav bar entry `LV_SYMBOL_LIST " News"` |
+
+### Parsing approach (worth keeping if rebuilt)
+
+`fetchNews()` used a **streaming XML state machine** — it read
+`<item><title>…</title></item>` blocks character-by-character directly off
+the HTTP response stream into fixed stack buffers, so the full response body
+was never buffered into one heap allocation (the same principle later
+generalized into `BlockingStream` for the JSON fetchers — see
+[HTTP Fetch & SSL Memory Optimization](#http-fetch--ssl-memory-optimization)).
+Oversized headlines (`text_len > NEWS_HEADLINE_LEN`) were discarded rather
+than truncated into garbage. `<![CDATA[…]]>` sections were handled for feeds
+that wrap titles in them.
+
+**Character cleanup**, applied in this order to each headline:
+1. `_utf8ToAscii()` — Google News sends raw UTF-8 multi-byte sequences for
+   smart quotes (`'` `"`) and dashes (`–` `—`); converted to plain ASCII
+   equivalents for the display font.
+2. `_decodeEntities()` — handled any remaining `&amp;`-style XML entities.
+
+**Failure handling:** on a failed fetch, `last_news_ms` was rewound so the
+next attempt came in 5 minutes instead of the full 30-minute interval.
+
+### UI layout (`ui_news.h`, 800×480)
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  ≡ Breaking News                              Updated 3:14 PM │ h=50
+├──────────────────────────────────────────────────────────────┤
+│  ▶ Headline text, word-wrapped to width...                    │
+│  ▶ Headline text, word-wrapped to width...   (alternating     │
+│  ▶ Headline text, word-wrapped to width...    row shading)    │ h=400
+│  … up to 12, scrollable                                       │
+├──────────────────────────────────────────────────────────────┤
+│  [nav bar]                                                     │ h=30
+└──────────────────────────────────────────────────────────────┘
+```
+
+- `lv_list` with one `lv_list_add_btn(LV_SYMBOL_RIGHT, headline)` per item,
+  alternating row background (`0x16213e` / `0x1a1a2e`), `montserrat_16` font,
+  label long-mode `LV_LABEL_LONG_WRAP` at width `SCREEN_WIDTH - 60`.
+- Header timestamp used the same gray → orange (2×interval) → red (4×interval)
+  staleness coloring as the other screens.
+
 ---
 
 ## License

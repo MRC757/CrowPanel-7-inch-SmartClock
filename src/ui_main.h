@@ -12,7 +12,7 @@
 //   │  Humidity 45%         │  VYMI         55.32  +0.23%  ▲     │
 //   │  Wind 8.0 mph         │  VYM         123.45  +0.18%  ▲     │
 //   ├───────────────────────┴──────────────────────────────────────┤
-//   │  [⚙ Setup]   [🏠 Clock]   [📰 News]   [📈 Stocks]           │ h=30
+//   │  [⚙ Setup]   [🏠 Clock]   [📈 Stocks]                        │ h=30
 //   └──────────────────────────────────────────────────────────────┘
 // ─────────────────────────────────────────────────────────────────────────────
 #include <Arduino.h>
@@ -20,7 +20,6 @@
 #include <time.h>
 #include "config.h"
 #include "weather_api.h"
-#include "news_api.h"
 #include "stock_api.h"
 #include "moon.h"
 
@@ -74,7 +73,6 @@ static void _create_nav_bar(lv_obj_t* scr, int active_screen) {
     const struct { const char* label; int id; } TABS[] = {
         { LV_SYMBOL_SETTINGS " Setup",   SCR_SETUP    },
         { LV_SYMBOL_HOME     " Clock",   SCR_MAIN     },
-        { LV_SYMBOL_LIST     " News",    SCR_NEWS     },
         { LV_SYMBOL_BARS     " Stocks",  SCR_STOCKS   },
         { LV_SYMBOL_TINT     " Daily",   SCR_FORECAST },
         { LV_SYMBOL_REFRESH  " Hourly",  SCR_HOURLY   },
@@ -454,5 +452,3 @@ inline void ui_main_set_offline(bool offline) {
     }
 }
 
-// ─── Update news ticker (removed — news available on the News screen) ───────
-inline void ui_main_update_news(const NewsData&) {}

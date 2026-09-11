@@ -179,7 +179,7 @@
 #   define LV_TEXTAREA_DEF_PWD_SHOW_TIME 1500
 #define LV_USE_TABLE      1
 #define LV_USE_KEYBOARD   1   /* On-screen keyboard for WiFi/ZIP entry */
-#define LV_USE_LIST       1   /* News headline list */
+#define LV_USE_LIST       1   /* WiFi network scan popup */
 #define LV_USE_MENU       0
 #define LV_USE_METER      0
 #define LV_USE_MSGBOX     1
