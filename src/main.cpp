@@ -4,7 +4,7 @@
 // Boot flow:
 //   1. Hardware init (I2C @ 400 kHz, backlight via STC8H MCU, display, GT911 touch)
 //   2. LVGL init + register display/touch drivers
-//   3. Build all screens (Setup, Clock, News, Stocks, Forecast, Hourly, NFL, NBA, Joke)
+//   3. Build all screens (Setup, Clock, Stocks, Forecast, Hourly, NFL, NBA, Joke)
 //   4. Load NVS preferences (WiFi, ZIP, stock symbols/names, NBA team IDs)
 //      - If WiFi credentials exist  → try connecting, then go to Clock screen
 //      - Otherwise                  → show Setup screen
@@ -13,7 +13,6 @@
 // Data refresh schedule (configurable in config.h):
 //   Weather + forecast + UV  — every  1 hr   (Open-Meteo, no key)
 //   Weather alerts           — every  5 min  (NWS, US only, no key)
-//   News                     — every 30 min  (Google News RSS, no key)
 //   Stocks                   — every  5 min  (Yahoo Finance chart API, no key)
 //   NFL                      — every  1 hr   (Ball Don't Lie, free key required)
 //   NBA                      — every  1 hr   (Ball Don't Lie, same key as NFL)
@@ -40,14 +39,12 @@
 #include "rtc_bm8563.h"   // BM8563 hardware RTC at I2C 0x51 (battery-backed)
 #include "prefs_mgr.h"
 #include "weather_api.h"
-#include "news_api.h"
 #include "stock_api.h"
 #include "moon.h"
 #include "iss_api.h"
 #include "alerts_api.h"
 #include "ui_setup.h"
 #include "ui_main.h"
-#include "ui_news.h"
 #include "ui_stocks.h"
 #include "ui_forecast.h"
 #include "ui_hourly.h"
@@ -68,7 +65,6 @@ static TAMC_GT911 ts(I2C_SDA_PIN, I2C_SCL_PIN, -1, -1, SCREEN_WIDTH, SCREEN_HEIG
 AppPrefs    g_prefs;
 WeatherData g_weather = {};
 StocksData  g_stocks  = {};
-NewsData    g_news    = {};
 IssData     g_iss     = {};
 AlertsData  g_alerts  = {};
 NflData     g_nfl     = {};
@@ -77,7 +73,6 @@ NbaData     g_nba     = {};
 // Active LVGL screen objects
 static lv_obj_t* scr_setup    = nullptr;
 static lv_obj_t* scr_main     = nullptr;
-static lv_obj_t* scr_news     = nullptr;
 static lv_obj_t* scr_stocks   = nullptr;
 static lv_obj_t* scr_forecast = nullptr;
 static lv_obj_t* scr_hourly   = nullptr;
@@ -87,7 +82,6 @@ static lv_obj_t* scr_countdown = nullptr;
 
 // Timing
 static unsigned long last_weather_ms   = 0;
-static unsigned long last_news_ms      = 0;
 static unsigned long last_stocks_ms    = 0;
 static unsigned long last_ntp_ms       = 0;
 static unsigned long last_iss_ms       = 0;
@@ -105,6 +99,13 @@ static uint32_t      last_alert_hash   = 0;
 static bool wifi_connected   = false;
 static bool first_fetch_done = false;
 static bool rtc_available    = false;   // true if BM8563 responds on I2C
+
+// Set by _ntp_sync_cb() the moment SNTP actually applies a server response via
+// settimeofday()/adjtime() — see ntp_sync() for why this can't be inferred
+// from getLocalTime() (system time is already valid from the BM8563 restore
+// at boot, so that check alone can't tell "old RTC time" from "fresh NTP time").
+static volatile bool ntp_sync_confirmed = false;
+static void _ntp_sync_cb(struct timeval* /*tv*/) { ntp_sync_confirmed = true; }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Backlight — controlled by STC8H1K28 MCU at I2C address 0x30.
@@ -190,10 +191,6 @@ void navigateTo(int screenId) {
     switch (screenId) {
         case SCR_SETUP:  target = scr_setup;  break;
         case SCR_MAIN:   target = scr_main;   break;
-        case SCR_NEWS:
-            target = scr_news;
-            ui_news_tick();          // refresh staleness color
-            break;
         case SCR_STOCKS:
             target = scr_stocks;
             ui_stocks_update(g_stocks);  // push latest data
@@ -271,7 +268,7 @@ static bool wifi_connect(const char* ssid, const char* pass,
 // Root cause of SSL -32512 ("Memory allocation failed") after ~12 hours uptime:
 //   mbedTLS allocates small structs directly from SRAM via heap_caps_calloc(MALLOC_CAP_INTERNAL),
 //   bypassing SPIRAM_MALLOC_ALWAYSINTERNAL.  After ~386 SSL handshakes (stocks every 5 min
-//   + alerts + weather + news + NFL/NBA over 12 h) SRAM fragments: total free may be 60+ KB
+//   + alerts + weather + NFL/NBA over 12 h) SRAM fragments: total free may be 60+ KB
 //   but no contiguous block exists for a new mbedtls_ssl_handshake_params (~3-4 KB).
 //
 //   heap_caps_get_free_size() is O(1) per region — safe to call.  Threshold is 70 KB
@@ -305,25 +302,49 @@ static void recover_ssl_heap() {
 // NTP sync — uses UTC offset stored in g_prefs (or returned by Open-Meteo).
 // Calling configTime() with the correct total offset gives local time via
 // getLocalTime(), no POSIX TZ string required.
+//
+// BUG FIXED 2026-09: the wait loop used to poll getLocalTime() and treat any
+// success as "synced". That's wrong — rtc_restore_system_time() already calls
+// settimeofday() from the BM8563 at boot, before WiFi even connects, so
+// getLocalTime() returns true on the very first 200 ms poll using the OLD
+// RTC time, almost always before the real NTP UDP round-trip completes. The
+// loop then wrote that same unverified time back to the RTC and immediately
+// stopped SNTP — so "hourly re-sync" never actually corrected drift, it just
+// echoed the RTC's own value back to itself. Symptom: the clock drifts by
+// the BM8563 crystal's real tolerance (observed ~2 min) and NTP never fixes
+// it. Fix: wait for _ntp_sync_cb() — fired by the SNTP client only when it
+// actually applies a server response — instead of inferring success from
+// system time merely being non-zero.
 // ─────────────────────────────────────────────────────────────────────────────
 static void ntp_sync() {
     if (!wifi_connected) return;
+    ntp_sync_confirmed = false;
     // Pass totalOffset as gmtOffset, 0 daylight — Open-Meteo already folds DST in.
     configTime(g_prefs.utc_offset_sec, 0, NTP_SERVER_1, NTP_SERVER_2);
     Serial.printf("[NTP] Sync requested (UTC%+d)\n", g_prefs.utc_offset_sec / 3600);
     last_ntp_ms = millis();
 
-    // Wait briefly for SNTP response, then write the accurate time to the
-    // BM8563 hardware RTC so it survives power cycles.
-    if (rtc_available) {
+    // Wait for an actual server response (DNS + UDP round-trip; first lookup
+    // can be slow), then write the confirmed-fresh time to the BM8563 RTC.
+    bool synced = false;
+    for (int attempt = 0; attempt < 25; attempt++) {   // up to ~5 s
+        esp_task_wdt_reset();
+        delay(200);
+        if (ntp_sync_confirmed) { synced = true; break; }
+    }
+
+    if (synced) {
         struct tm ti;
-        for (int attempt = 0; attempt < 10; attempt++) {
-            delay(200);
-            if (getLocalTime(&ti, 100)) {
-                rtc_write(ti);   // BM8563 stores local time directly
-                break;
-            }
+        if (rtc_available && getLocalTime(&ti, 100)) {
+            rtc_write(ti);   // BM8563 stores local time directly
+            Serial.println("[NTP] Sync confirmed by server — RTC updated");
+        } else {
+            Serial.println("[NTP] Sync confirmed by server");
         }
+    } else {
+        // No response in time — leave the RTC alone (don't overwrite it with
+        // unverified system time) and retry on the next periodic sync.
+        Serial.println("[NTP] No server response within 5 s — RTC left unchanged, will retry");
     }
 
     // configTime() leaves ESP-IDF's SNTP client running a periodic background
@@ -365,17 +386,6 @@ static void do_weather_fetch(bool force_geocode = false) {
         ui_hourly_update(g_weather);
     }
     last_weather_ms = millis();
-}
-
-static void do_news_fetch() {
-    esp_task_wdt_reset();
-    if (!wifi_connected) return;
-    Serial.println("[NEWS] Fetching news...");
-    fetchNews(g_news);
-    ui_main_update_news(g_news);
-    ui_news_update(g_news);
-    // If fetch completely failed (timeout/SSL error), retry in 5 min instead of 30.
-    last_news_ms = g_news.valid ? millis() : millis() - NEWS_UPDATE_MS + 5UL * 60 * 1000;
 }
 
 static void do_stocks_fetch() {
@@ -491,12 +501,12 @@ static void do_nba_fetch() {
 
 // Performs the full first-load fetch sequence with LVGL yielding between calls.
 static void initial_fetch() {
-    // After ESP.restart() (ESP_RST_SW), skip news + ISS/NFL/NBA to conserve SRAM.
+    // After ESP.restart() (ESP_RST_SW), skip ISS/NFL/NBA to conserve SRAM.
     // Each SSL handshake leaves ~3-4 KB of non-reclaimable SRAM fragments.
-    // News costs ~7 KB; ISS/NFL/NBA cost ~3 KB each.  Skipping all four keeps
-    // SRAM above ~65 KB when stocks runs, ensuring the SHA hardware accelerator
-    // can complete every TLS handshake in the batch.  Skipped APIs pick up on
-    // their normal periodic intervals (news=30 min, NFL/NBA=1 hr, ISS=6 hr).
+    // ISS/NFL/NBA cost ~3 KB each.  Skipping all three keeps SRAM above ~65 KB
+    // when stocks runs, ensuring the SHA hardware accelerator can complete
+    // every TLS handshake in the batch.  Skipped APIs pick up on their normal
+    // periodic intervals (NFL/NBA=1 hr, ISS=6 hr).
     bool sw_restart = (esp_reset_reason() == ESP_RST_SW);
 
     ui_setup_set_status("Fetching weather...", lv_color_hex(0x4fc3f7));
@@ -509,7 +519,7 @@ static void initial_fetch() {
         // freshest (only 1 prior SSL handshake).  Each additional handshake before
         // stocks further fragments the SRAM heap, leaving the SHA DMA allocator
         // without a contiguous block when Yahoo drops keep-alive mid-batch.
-        // News / ISS / NFL / NBA are deferred to their periodic timers.
+        // ISS / NFL / NBA are deferred to their periodic timers.
         ui_setup_set_status("Fetching market data...", lv_color_hex(0x4fc3f7));
         lv_timer_handler(); delay(20);
         do_stocks_fetch();
@@ -519,10 +529,6 @@ static void initial_fetch() {
         do_alerts_fetch();
     } else {
         // Normal (hardware) boot: full fetch sequence.
-        ui_setup_set_status("Fetching news...", lv_color_hex(0x4fc3f7));
-        lv_timer_handler(); delay(20);
-        do_news_fetch();
-
         ui_setup_set_status("Fetching market data...", lv_color_hex(0x4fc3f7));
         lv_timer_handler(); delay(20);
         do_stocks_fetch();
@@ -684,7 +690,7 @@ void setup() {
     // ── Hardware task watchdog (30 s) ─────────────────────────────────────
     // Resets the device if the main task hangs in a blocking HTTP call
     // (e.g. server accepts the TCP connection but never sends a response).
-    // 30 s covers the longest legitimate fetch (news: 20 s HTTP timeout + margin).
+    // 30 s covers the longest legitimate fetch (NFL/NBA/alerts: 15 s HTTP timeout + margin).
     // The WDT is fed at the top of loop() and before every blocking fetch.
     {
         const esp_task_wdt_config_t wdt_cfg = {
@@ -763,7 +769,6 @@ void setup() {
     scr_setup    = ui_setup_create(nullptr, on_setup_connect, on_night_brightness_change,
                                    on_scan_networks, on_stock_changed, on_teams_changed);
     scr_main     = ui_main_create();
-    scr_news     = ui_news_create();
     scr_stocks   = ui_stocks_create();
     scr_forecast = ui_forecast_create();
     scr_hourly   = ui_hourly_create();
@@ -787,6 +792,11 @@ void setup() {
     if (rtc_available) {
         rtc_restore_system_time(g_prefs.utc_offset_sec);
     }
+
+    // Register the sync-completion callback BEFORE the first configTime() call
+    // so ntp_sync() can tell a real server response apart from system time
+    // that's merely already valid from the RTC restore above (see ntp_sync()).
+    sntp_set_time_sync_notification_cb(_ntp_sync_cb);
 
     // Configure timezone so getLocalTime() applies the correct local offset
     // even before WiFi connects.  Also arms the SNTP client in the background;
@@ -854,11 +864,6 @@ void loop() {
             do_weather_fetch();
         }
 
-        // News update
-        if (first_fetch_done && now - last_news_ms >= NEWS_UPDATE_MS) {
-            do_news_fetch();
-        }
-
         // Stocks update
         if (first_fetch_done && now - last_stocks_ms >= STOCKS_UPDATE_MS) {
             do_stocks_fetch();
@@ -908,7 +913,6 @@ void loop() {
                 // Mid-session reconnect — re-fetch any source that went stale
                 unsigned long now = millis();
                 if (now - last_weather_ms >= WEATHER_UPDATE_MS) do_weather_fetch();
-                if (now - last_news_ms    >= NEWS_UPDATE_MS)    do_news_fetch();
                 if (now - last_stocks_ms  >= STOCKS_UPDATE_MS)  do_stocks_fetch();
                 if (now - last_alerts_ms  >= ALERTS_UPDATE_MS)  do_alerts_fetch();
                 if (now - last_nfl_ms     >= NFL_UPDATE_MS)     do_nfl_fetch();

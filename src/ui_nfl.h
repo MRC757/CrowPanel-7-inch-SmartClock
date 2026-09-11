@@ -13,7 +13,7 @@
 //   │    LAR @ CHI                                              8:20 PM       │ h=38
 //   │  (scrollable if > ~8 games)                                             │
 //   ├──────────────────────────────────────────────────────────────────────────┤
-//   │  [⚙ Setup] [🏠 Clock] [📰 News] [📈 Stocks] [🌤 Forecast] [▶ NFL]    │ h=30
+//   │  [⚙ Setup] [🏠 Clock] [📈 Stocks] [🌤 Forecast] [▶ NFL]              │ h=30
 //   └──────────────────────────────────────────────────────────────────────────┘
 //
 // Call ui_nfl_create() once; call ui_nfl_update(NflData&) after each fetch.
