@@ -5,9 +5,15 @@
 // Endpoint: https://api.weather.gov/alerts/active?point={lat},{lon}
 // Free, no key, HTTPS, US only.
 //
-// SSL fix: _alerts_client is a file-scope static that persists across calls.
-// On reconnect, mbedtls_ssl_session_reset() is used instead of
-// mbedtls_ssl_setup(), avoiding the alloc/free cycle that fragments SRAM.
+// SSL note: _alerts_client is a file-scope static so its setInsecure() config
+// is set once.  It does NOT preserve the TLS session between fetches — the
+// local HTTPClient inside fetchAlerts() closes the socket when it goes out of
+// scope (~HTTPClient() calls _client->stop() unconditionally), so every call
+// does a fresh handshake regardless.  Not worth fixing to actually persist:
+// alerts fetches once every 5 minutes, far longer than any server's idle
+// keep-alive timeout, so a genuinely kept-alive session wouldn't survive
+// between calls anyway (same reason the stocks keep-alive attempt was
+// reverted — see json_buf.h / README's HTTP Fetch & SSL Memory Optimization).
 // ─────────────────────────────────────────────────────────────────────────────
 #include <Arduino.h>
 #include <WiFiClientSecure.h>
@@ -47,7 +53,8 @@ static time_t _parse_iso8601(const char* iso) {
     return mktime(&t);
 }
 
-// Persistent SSL client — keeps TLS context alive between 5-minute fetches.
+// File-scope so setInsecure() is applied once (see SSL note above — the TLS
+// session itself does not persist between fetches).
 static WiFiClientSecure _alerts_client;
 static bool             _alerts_client_ready = false;
 
@@ -60,9 +67,10 @@ static bool fetchAlerts(float lat, float lon, AlertsData& ad) {
         _alerts_client_ready = true;
     }
 
-    // Retry loop: on SSL failure (-1), stop client and retry with a fresh handshake.
-    // First attempt reuses the existing TLS session (or reconnects via session_reset
-    // if NWS has closed the connection) — no context reallocation either way.
+    // Retry loop: on SSL failure (-1), stop the client and retry with a fresh
+    // handshake.  Every attempt — including the "first" one — already does a
+    // fresh handshake (see SSL note above), so this is just "try again after
+    // a short delay," not a session-reset vs. full-setup distinction.
     HTTPClient http;
     int code = 0;
 
@@ -113,7 +121,6 @@ static bool fetchAlerts(float lat, float lon, AlertsData& ad) {
     DeserializationError err = deserializeJson(doc, http.getStream(),
                                                DeserializationOption::Filter(filter));
     http.end();
-    // Keep _alerts_client alive for next fetch — avoids mbedtls_ssl_setup() on reconnect.
 
     if (err) {
         Serial.printf("[ALERTS] JSON err: %s\n", err.c_str());

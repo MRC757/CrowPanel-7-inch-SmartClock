@@ -1,5 +1,7 @@
 # Smart Clock
 
+[![Build Firmware](https://github.com/MRC757/CrowPanel-7-inch-SmartClock/actions/workflows/build.yml/badge.svg)](https://github.com/MRC757/CrowPanel-7-inch-SmartClock/actions/workflows/build.yml)
+
 A full-featured smart clock display for the **Elecrow CrowPanel Advance 7.0 HMI ESP32-S3** *(SKU: DIS02170A, V1.3)* (800×480 IPS touchscreen). Displays local time, weather, 5-day forecast, 3-day hourly charts, market data, ISS pass times, weather alerts, NFL scores, NBA scores for any two configurable teams, and user-defined countdowns — with automatic night dimming, audible severe-weather alerts, and configurable stock symbols and NBA teams via the on-screen setup.
 
 ![Smart Clock Layout](docs/layout.png)
@@ -364,7 +366,7 @@ The Forecast screen's ISS strip uses the [N2YO](https://www.n2yo.com) satellite 
 
 Without a key the ISS strip shows a registration reminder.
 
-`include/secrets.h` is listed in `.gitignore` — your keys will not be committed if you use git.
+`include/secrets.h` is listed in `.gitignore` — your keys will not be committed if you use git. `include/secrets.h.example` is the tracked template (empty keys); it's also what the CI build in `.github/workflows/build.yml` compiles against, so a broken build can be caught without any real key present.
 
 ---
 
@@ -550,7 +552,8 @@ Built-in ESP32 Arduino libraries used: `WiFi`, `WiFiClientSecure`, `HTTPClient`,
 git clone https://github.com/YOUR_USERNAME/smart-clock.git
 cd smart-clock/SmartClockProject
 
-# Add your API keys to include/secrets.h:
+# Copy the template and add your API keys (include/secrets.h is gitignored)
+cp include/secrets.h.example include/secrets.h
 #   BALLDONTLIE_API_KEY  — Ball Don't Lie NFL/NBA API (balldontlie.io)
 #   N2YO_API_KEY         — ISS pass predictions       (n2yo.com)
 
