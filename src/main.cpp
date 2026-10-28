@@ -18,6 +18,12 @@
 //   NBA                      — every  1 hr   (Ball Don't Lie, same key as NFL)
 //   ISS pass times           — every  6 hr   (N2YO, free key required)
 //   NTP re-sync              — every  1 hr
+//
+// This file owns hardware init, LVGL wiring, screen lifecycle, and the setup()/
+// loop() entry points. Global state, WiFi connection lifecycle, NTP sync, and
+// data-fetch scheduling live in app_state.h / wifi_mgr.h / ntp_mgr.h /
+// fetch_mgr.h respectively — split out from here to keep each concern in its
+// own file rather than one growing monolith.
 // ─────────────────────────────────────────────────────────────────────────────
 #include <Arduino.h>
 
@@ -56,56 +62,16 @@
 #include "ui_nba.h"
 #include "ui_countdown.h"
 
+// Global state, WiFi lifecycle, NTP sync, fetch scheduling — see each file's
+// header comment. fetch_mgr.h pulls in wifi_mgr.h and ntp_mgr.h itself, but
+// all three are listed explicitly here for readability.
+#include "app_state.h"
+#include "wifi_mgr.h"
+#include "ntp_mgr.h"
+#include "fetch_mgr.h"
+
 // GT911 touch controller (TAMC_GT911 via Wire; SDA=15, SCL=16, no IRQ/RST pins)
 static TAMC_GT911 ts(I2C_SDA_PIN, I2C_SCL_PIN, -1, -1, SCREEN_WIDTH, SCREEN_HEIGHT);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Global state
-// ─────────────────────────────────────────────────────────────────────────────
-AppPrefs    g_prefs;
-WeatherData g_weather = {};
-StocksData  g_stocks  = {};
-IssData     g_iss     = {};
-AlertsData  g_alerts  = {};
-NflData     g_nfl     = {};
-NbaData     g_nba     = {};
-
-// Active LVGL screen objects
-static lv_obj_t* scr_setup    = nullptr;
-static lv_obj_t* scr_main     = nullptr;
-static lv_obj_t* scr_stocks   = nullptr;
-static lv_obj_t* scr_forecast = nullptr;
-static lv_obj_t* scr_hourly   = nullptr;
-static lv_obj_t* scr_nfl      = nullptr;
-static lv_obj_t* scr_nba      = nullptr;
-static lv_obj_t* scr_countdown = nullptr;
-
-// Timing
-static unsigned long last_weather_ms   = 0;
-static unsigned long last_stocks_ms    = 0;
-static unsigned long last_ntp_ms       = 0;
-static unsigned long last_iss_ms       = 0;
-static unsigned long last_alerts_ms    = 0;
-static unsigned long last_nfl_ms            = 0;
-static unsigned long last_nba_ms            = 0;
-static unsigned long last_dim_check_ms      = 0;  // auto-dim evaluation interval
-static unsigned long last_reconnect_ms      = 0;  // WiFi reconnect watchdog
-
-// Alert state — track a hash of active Extreme/Severe events so we only
-// buzz when the alert set genuinely changes (not on every 5-min re-fetch).
-static uint32_t      last_alert_hash   = 0;
-
-// State flags
-static bool wifi_connected   = false;
-static bool first_fetch_done = false;
-static bool rtc_available    = false;   // true if BM8563 responds on I2C
-
-// Set by _ntp_sync_cb() the moment SNTP actually applies a server response via
-// settimeofday()/adjtime() — see ntp_sync() for why this can't be inferred
-// from getLocalTime() (system time is already valid from the BM8563 restore
-// at boot, so that check alone can't tell "old RTC time" from "fresh NTP time").
-static volatile bool ntp_sync_confirmed = false;
-static void _ntp_sync_cb(struct timeval* /*tv*/) { ntp_sync_confirmed = true; }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Backlight — controlled by STC8H1K28 MCU at I2C address 0x30.
@@ -223,365 +189,6 @@ void navigateTo(int screenId) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// WiFi helpers
-// ─────────────────────────────────────────────────────────────────────────────
-// Non-blocking-friendly connect: yields to LVGL every 100 ms while waiting.
-static bool wifi_connect(const char* ssid, const char* pass,
-                          unsigned long timeout_ms = 15000) {
-    if (strlen(ssid) == 0) return false;
-
-    Serial.printf("[WiFi] Connecting to \"%s\" ...\n", ssid);
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid, pass);
-
-    unsigned long t0 = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t0 < timeout_ms) {
-        lv_timer_handler();   // keep LVGL alive (spinner animation, etc.)
-        delay(100);
-    }
-
-    wifi_connected = (WiFi.status() == WL_CONNECTED);
-    if (wifi_connected) {
-        Serial.printf("[WiFi] Connected, IP %s\n", WiFi.localIP().toString().c_str());
-    } else {
-        Serial.println("[WiFi] Connection timed out");
-        WiFi.disconnect();
-    }
-    return wifi_connected;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SSL heap recovery — REACTIVE WiFi cycle, called only after a fetch fails.
-//
-// Previously this ran before every stocks/iss/alerts/NFL/NBA fetch.  Once the
-// steady-state SRAM baseline settled below the 70 KB trigger (which it now
-// does — see memory: ssl-heap-vs-screen-count), that meant a full WiFi
-// teardown+reconnect (~2 s, WDT-risky) before *every* fetch, every round,
-// with free SRAM barely moving afterward.  Pure tax, no benefit.
-//
-// It is now invoked only when a fetch actually returns failure, to give the
-// next fetch in the same round a chance.  The >= 70 KB early-out also makes it
-// a no-op when a fetch failed with plenty of SRAM free (i.e. a transient
-// network error, not heap exhaustion).
-//
-// Root cause of SSL -32512 ("Memory allocation failed") after ~12 hours uptime:
-//   mbedTLS allocates small structs directly from SRAM via heap_caps_calloc(MALLOC_CAP_INTERNAL),
-//   bypassing SPIRAM_MALLOC_ALWAYSINTERNAL.  After ~386 SSL handshakes (stocks every 5 min
-//   + alerts + weather + NFL/NBA over 12 h) SRAM fragments: total free may be 60+ KB
-//   but no contiguous block exists for a new mbedtls_ssl_handshake_params (~3-4 KB).
-//
-//   heap_caps_get_free_size() is O(1) per region — safe to call.  Threshold is 70 KB
-//   (not 40 KB) because total free does NOT equal largest contiguous block; at lower
-//   values the heap is already fragmented beyond what WiFi cycling can recover.
-//
-//   NOTE: WiFi cycling does NOT defragment SRAM.  cert-parse fragments persist across
-//   connect/disconnect cycles.  If the proactive cycle fails to prevent -32512, the
-//   reactive path in do_stocks_fetch() forces a second cycle then calls ESP.restart().
-// ─────────────────────────────────────────────────────────────────────────────
-static void recover_ssl_heap() {
-    uint32_t free_sram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-    // Note: get_free_size() returns TOTAL free, not largest contiguous block.
-    // The threshold is set conservatively high (70 KB) so WiFi is cycled while
-    // SRAM fragmentation is still mild — large contiguous blocks still exist.
-    // At lower values (e.g. 40 KB), total free can be spread across tiny fragments
-    // with no block large enough for a new SSL context, causing -32512 alloc failure.
-    if (free_sram >= 70000) return;
-
-    Serial.printf("[SSL] Low SRAM (%u B) — cycling WiFi to recover heap\n", free_sram);
-    wifi_connected = false;
-    WiFi.disconnect(true);    // release DHCP lease and free LwIP/driver allocations
-    delay(1000);              // allow LwIP teardown to complete before reconnect
-    if (wifi_connect(g_prefs.wifi_ssid, g_prefs.wifi_pass)) {
-        Serial.printf("[SSL] Reconnected — free SRAM now %u B\n",
-                      heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// NTP sync — uses UTC offset stored in g_prefs (or returned by Open-Meteo).
-// Calling configTime() with the correct total offset gives local time via
-// getLocalTime(), no POSIX TZ string required.
-//
-// BUG FIXED 2026-09: the wait loop used to poll getLocalTime() and treat any
-// success as "synced". That's wrong — rtc_restore_system_time() already calls
-// settimeofday() from the BM8563 at boot, before WiFi even connects, so
-// getLocalTime() returns true on the very first 200 ms poll using the OLD
-// RTC time, almost always before the real NTP UDP round-trip completes. The
-// loop then wrote that same unverified time back to the RTC and immediately
-// stopped SNTP — so "hourly re-sync" never actually corrected drift, it just
-// echoed the RTC's own value back to itself. Symptom: the clock drifts by
-// the BM8563 crystal's real tolerance (observed ~2 min) and NTP never fixes
-// it. Fix: wait for _ntp_sync_cb() — fired by the SNTP client only when it
-// actually applies a server response — instead of inferring success from
-// system time merely being non-zero.
-// ─────────────────────────────────────────────────────────────────────────────
-static void ntp_sync() {
-    if (!wifi_connected) return;
-    ntp_sync_confirmed = false;
-    // Pass totalOffset as gmtOffset, 0 daylight — Open-Meteo already folds DST in.
-    configTime(g_prefs.utc_offset_sec, 0, NTP_SERVER_1, NTP_SERVER_2);
-    Serial.printf("[NTP] Sync requested (UTC%+d)\n", g_prefs.utc_offset_sec / 3600);
-    last_ntp_ms = millis();
-
-    // Wait for an actual server response (DNS + UDP round-trip; first lookup
-    // can be slow), then write the confirmed-fresh time to the BM8563 RTC.
-    bool synced = false;
-    for (int attempt = 0; attempt < 25; attempt++) {   // up to ~5 s
-        esp_task_wdt_reset();
-        delay(200);
-        if (ntp_sync_confirmed) { synced = true; break; }
-    }
-
-    if (synced) {
-        struct tm ti;
-        if (rtc_available && getLocalTime(&ti, 100)) {
-            rtc_write(ti);   // BM8563 stores local time directly
-            Serial.println("[NTP] Sync confirmed by server — RTC updated");
-        } else {
-            Serial.println("[NTP] Sync confirmed by server");
-        }
-    } else {
-        // No response in time — leave the RTC alone (don't overwrite it with
-        // unverified system time) and retry on the next periodic sync.
-        Serial.println("[NTP] No server response within 5 s — RTC left unchanged, will retry");
-    }
-
-    // configTime() leaves ESP-IDF's SNTP client running a periodic background
-    // re-sync (its own lwIP-thread DNS callback) indefinitely. We already
-    // manage re-sync ourselves via a periodic ntp_sync() call every
-    // NTP_SYNC_MS, so that background client serves no purpose here — and its
-    // DNS callback can fire concurrently with our own HTTPS DNS lookups
-    // (e.g. the weather geocode fetch immediately following), racing on the
-    // lwIP TCP/IP core lock with no protection. Observed as:
-    //   "assert failed: udp_new_ip_type ... Required to lock TCPIP core
-    //    functionality!" — a hard crash/reboot. Stopping the client here
-    //   removes the race entirely.
-    if (esp_sntp_enabled()) esp_sntp_stop();
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Data fetch helpers — each yields to LVGL during the HTTP request
-// ─────────────────────────────────────────────────────────────────────────────
-static void do_weather_fetch(bool force_geocode = false) {
-    esp_task_wdt_reset();
-    if (!wifi_connected || strlen(g_prefs.zip_code) == 0) return;
-    Serial.println("[WX] Fetching weather...");
-    if (fetchWeather(g_prefs.zip_code, g_weather, force_geocode)) {
-        // If the timezone offset changed, re-sync NTP
-        if (g_weather.utc_offset_sec != g_prefs.utc_offset_sec) {
-            g_prefs.utc_offset_sec = g_weather.utc_offset_sec;
-            prefs_save_utc(g_prefs.utc_offset_sec);
-            ntp_sync();
-        }
-        // Persist city name
-        if (strcmp(g_weather.city_name, g_prefs.city_name) != 0) {
-            strncpy(g_prefs.city_name, g_weather.city_name, sizeof(g_prefs.city_name) - 1);
-            prefs_save_city(g_prefs.city_name);
-        }
-        ui_main_update_weather(g_weather);
-        delay(1);  // yield to scheduler — feed interrupt WDT between UI updates
-        ui_forecast_update(g_weather);
-        delay(1);
-        ui_hourly_update(g_weather);
-    }
-    last_weather_ms = millis();
-}
-
-static void do_stocks_fetch() {
-    esp_task_wdt_reset();
-    if (!wifi_connected) return;
-    Serial.println("[STOCKS] Fetching stocks...");
-    if (!fetchStocks(g_stocks, g_prefs.stock_symbols, g_prefs.stock_names)) {
-        // All 6 symbols failed — SSL alloc failure due to SRAM heap fragmentation.
-        // WiFi cycling does NOT defragment SRAM (mbedTLS cert-parse fragments persist
-        // across connect/disconnect cycles).  Try one WiFi cycle as a cheap first
-        // attempt, then fall back to esp_restart() if SRAM is still critically low.
-        // esp_restart() is the correct fix: BM8563 RTC preserves time, NVS preserves
-        // credentials, and the device recovers in ~10 s with a clean unfragmented heap.
-        uint32_t pre_sram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-        Serial.printf("[STOCKS] All failed (free SRAM %u B) — cycling WiFi...\n", pre_sram);
-        wifi_connected = false;
-        WiFi.disconnect(true);
-        delay(1000);
-        if (wifi_connect(g_prefs.wifi_ssid, g_prefs.wifi_pass)) {
-            uint32_t post_sram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-            Serial.printf("[SSL] Reconnected — free SRAM now %u B\n", post_sram);
-            if (!fetchStocks(g_stocks, g_prefs.stock_symbols, g_prefs.stock_names)) {
-                if (post_sram < 65000) {
-                    // SRAM fragmented beyond WiFi-cycle recovery; restart is required.
-                    Serial.println("[SSL] Heap unrecoverable — restarting in 3 s");
-                    delay(3000);
-                    ESP.restart();
-                }
-                // else: SRAM looks adequate → transient network issue; skip this cycle
-            }
-        }
-    }
-    ui_main_update_stocks(g_stocks);
-    ui_stocks_update(g_stocks);
-    last_stocks_ms = millis();
-}
-
-static void do_iss_fetch() {
-    esp_task_wdt_reset();
-    if (!wifi_connected || g_weather.latitude == 0.0f) return;
-    Serial.println("[ISS] Fetching visible pass times...");
-    if (!fetchIss(g_weather.latitude, g_weather.longitude, g_iss))
-        recover_ssl_heap();   // reactive: give the next fetch in this round a chance
-    ui_forecast_update_iss(g_iss);
-    last_iss_ms = millis();
-}
-
-static void do_alerts_fetch() {
-    esp_task_wdt_reset();
-    if (!wifi_connected || g_weather.latitude == 0.0f) return;
-    Serial.println("[ALERTS] Fetching weather alerts...");
-    if (fetchAlerts(g_weather.latitude, g_weather.longitude, g_alerts)) {
-        ui_alert_update(g_alerts);
-
-        // Compute a fingerprint of all active Extreme/Severe alert events.
-        // djb2-style hash over event strings lets us detect new or changed alerts
-        // without storing a full list, and ignores re-fetches of the same alert.
-        uint32_t h = 0;
-        bool has_extreme = false;
-        bool has_severe  = false;
-        for (int i = 0; i < g_alerts.count; i++) {
-            const char* sev = g_alerts.alerts[i].severity;
-            if (strcmp(sev, "Extreme") == 0) has_extreme = true;
-            if (strcmp(sev, "Severe")  == 0) has_severe  = true;
-            if (strcmp(sev, "Extreme") == 0 || strcmp(sev, "Severe") == 0) {
-                const char* ev = g_alerts.alerts[i].event;
-                while (*ev) h = h * 31u + (uint8_t)*ev++;
-            }
-        }
-
-        // Only buzz when a new Extreme/Severe alert set arrives (h changed to non-zero).
-        if (h != 0 && h != last_alert_hash) {
-            if (has_extreme) {
-                // Extreme: 8 rapid pulses (80ms on / 40ms off) → 400ms gap, for 5 s
-                Serial.println("[BUZZER] Extreme alert — 5 s pulsing");
-                buzzer_alert_pulse(80, 40, 8, 400, 5000);
-            } else {
-                // Severe: 5 medium pulses (120ms on / 80ms off) → 600ms gap, for 5 s
-                Serial.println("[BUZZER] Severe alert — 5 s pulsing");
-                buzzer_alert_pulse(120, 80, 5, 600, 5000);
-            }
-        }
-        last_alert_hash = h;
-    } else {
-        recover_ssl_heap();   // reactive: give the next fetch in this round a chance
-    }
-    last_alerts_ms = millis();
-}
-
-static void do_nfl_fetch() {
-    esp_task_wdt_reset();
-    if (!wifi_connected) return;
-    Serial.println("[NFL] Fetching NFL schedule...");
-    if (fetchNfl(g_nfl, g_prefs.utc_offset_sec)) {
-        ui_nfl_update(g_nfl);
-    } else {
-        recover_ssl_heap();   // reactive: give the next fetch in this round a chance
-    }
-    last_nfl_ms = millis();
-}
-
-static void do_nba_fetch() {
-    esp_task_wdt_reset();
-    if (!wifi_connected) return;
-    Serial.println("[NBA] Fetching NBA schedule...");
-    if (fetchNba(g_nba, g_prefs.utc_offset_sec, g_prefs.nba_team1_id, g_prefs.nba_team2_id)) {
-        ui_nba_update(g_nba);
-    } else {
-        recover_ssl_heap();   // reactive: give the next fetch in this round a chance
-    }
-    last_nba_ms = millis();
-}
-
-// Performs the full first-load fetch sequence with LVGL yielding between calls.
-static void initial_fetch() {
-    // After ESP.restart() (ESP_RST_SW), skip ISS/NFL/NBA to conserve SRAM.
-    // Each SSL handshake leaves ~3-4 KB of non-reclaimable SRAM fragments.
-    // ISS/NFL/NBA cost ~3 KB each.  Skipping all three keeps SRAM above ~65 KB
-    // when stocks runs, ensuring the SHA hardware accelerator can complete
-    // every TLS handshake in the batch.  Skipped APIs pick up on their normal
-    // periodic intervals (NFL/NBA=1 hr, ISS=6 hr).
-    bool sw_restart = (esp_reset_reason() == ESP_RST_SW);
-
-    ui_setup_set_status("Fetching weather...", lv_color_hex(0x4fc3f7));
-    lv_timer_handler(); delay(20);
-
-    do_weather_fetch(/*force_geocode=*/true);
-
-    if (sw_restart) {
-        // On software restart: run stocks immediately after weather while SRAM is
-        // freshest (only 1 prior SSL handshake).  Each additional handshake before
-        // stocks further fragments the SRAM heap, leaving the SHA DMA allocator
-        // without a contiguous block when Yahoo drops keep-alive mid-batch.
-        // ISS / NFL / NBA are deferred to their periodic timers.
-        ui_setup_set_status("Fetching market data...", lv_color_hex(0x4fc3f7));
-        lv_timer_handler(); delay(20);
-        do_stocks_fetch();
-
-        ui_setup_set_status("Checking weather alerts...", lv_color_hex(0x4fc3f7));
-        lv_timer_handler(); delay(20);
-        do_alerts_fetch();
-    } else {
-        // Normal (hardware) boot: full fetch sequence.
-        ui_setup_set_status("Fetching market data...", lv_color_hex(0x4fc3f7));
-        lv_timer_handler(); delay(20);
-        do_stocks_fetch();
-
-        ui_setup_set_status("Checking weather alerts...", lv_color_hex(0x4fc3f7));
-        lv_timer_handler(); delay(20);
-        do_alerts_fetch();
-
-        ui_setup_set_status("Fetching ISS pass times...", lv_color_hex(0x4fc3f7));
-        lv_timer_handler(); delay(20);
-        do_iss_fetch();
-
-        ui_setup_set_status("Fetching NFL schedule...", lv_color_hex(0x4fc3f7));
-        lv_timer_handler(); delay(20);
-        do_nfl_fetch();
-
-        ui_setup_set_status("Fetching NBA schedule...", lv_color_hex(0x4fc3f7));
-        lv_timer_handler(); delay(20);
-        do_nba_fetch();
-    }
-
-    first_fetch_done = true;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Auto-dim — compare current local time against today's sunrise/sunset.
-// Runs every 60 seconds in loop() and once after initial_fetch().
-// ─────────────────────────────────────────────────────────────────────────────
-static void check_auto_dim() {
-    if (!g_weather.valid) return;   // no sunrise/sunset data yet
-
-    struct tm ti;
-    if (!getLocalTime(&ti, 100)) return;
-
-    int cur_min  = ti.tm_hour * 60 + ti.tm_min;
-    int rise_min = g_weather.sunrise_hour  * 60 + g_weather.sunrise_minute;
-    int set_min  = g_weather.sunset_hour   * 60 + g_weather.sunset_minute;
-
-    bool    is_day = (cur_min >= rise_min && cur_min < set_min);
-    uint8_t target = is_day ? 100 : g_prefs.night_brightness;
-
-    if (target != backlight_get_pct()) {
-        backlight_set_pct(target);
-        // Force LVGL to redraw the active screen so all pixels reflect the new level
-        lv_obj_invalidate(lv_scr_act());
-        Serial.printf("[BRIGHT] %s → %d%% (rise %02d:%02d, set %02d:%02d)\n",
-                      is_day ? "Day" : "Night", (int)target,
-                      g_weather.sunrise_hour, g_weather.sunrise_minute,
-                      g_weather.sunset_hour,  g_weather.sunset_minute);
-    }
-    last_dim_check_ms = millis();
-}
-
 // Called by the setup-screen brightness slider
 static void on_night_brightness_change(uint8_t pct) {
     g_prefs.night_brightness = pct;
@@ -603,36 +210,6 @@ static void on_teams_changed(int team1_id, int team2_id) {
     g_prefs.nba_team2_id = team2_id;
     prefs_save_nba_teams(team1_id, team2_id);
     Serial.printf("[SETUP] NBA teams saved: %d / %d\n", team1_id, team2_id);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Setup screen callback — called when user presses "Scan WiFi"
-// ─────────────────────────────────────────────────────────────────────────────
-static void on_scan_networks() {
-    ui_setup_set_status("Scanning for WiFi networks...", lv_color_hex(0xffb300));
-    lv_timer_handler();   // render the status update before blocking
-
-    WiFi.mode(WIFI_STA);
-    int n = WiFi.scanNetworks();   // blocking ~2 s; safe on setup screen
-
-    if (n <= 0) {
-        WiFi.scanDelete();
-        ui_setup_set_status("No networks found. Try again.", lv_color_hex(0xf44336));
-        return;
-    }
-
-    // Copy results into the struct array that ui_setup_show_scan_results expects
-    int m = (n > 20) ? 20 : n;
-    static WifiNetwork nets[20];
-    for (int i = 0; i < m; i++) {
-        String s = WiFi.SSID(i);
-        strncpy(nets[i].ssid, s.c_str(), sizeof(nets[i].ssid) - 1);
-        nets[i].ssid[sizeof(nets[i].ssid) - 1] = '\0';
-        nets[i].rssi    = WiFi.RSSI(i);
-        nets[i].secured = (WiFi.encryptionType(i) != WIFI_AUTH_OPEN);
-    }
-    WiFi.scanDelete();
-    ui_setup_show_scan_results(nets, m);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -795,7 +372,7 @@ void setup() {
 
     // Register the sync-completion callback BEFORE the first configTime() call
     // so ntp_sync() can tell a real server response apart from system time
-    // that's merely already valid from the RTC restore above (see ntp_sync()).
+    // that's merely already valid from the RTC restore above (see ntp_mgr.h).
     sntp_set_time_sync_notification_cb(_ntp_sync_cb);
 
     // Configure timezone so getLocalTime() applies the correct local offset
