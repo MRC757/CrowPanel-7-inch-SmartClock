@@ -11,8 +11,15 @@
 
 // Returns a short phase name for the given UTC Unix timestamp.
 static const char* moon_phase_name(time_t t) {
-    // Known new moon: 2000-01-06 18:14 UTC  (Unix epoch 946,685,640)
-    const double KNOWN_NEW_MOON_SEC = 946685640.0;
+    // Known new moon: 2000-01-06 18:14 UTC  (Unix epoch 947,182,440)
+    // BUG FIXED 2026-10-28: this constant was 946685640.0, which actually
+    // decodes to 2000-01-01 00:14 UTC -- 5 days 18 hours before the new moon
+    // the comment (correctly) describes. That ~5.75-day epoch error shifted
+    // every computed phase by the same amount, confirmed against a reference
+    // moon-phase calendar (Oct 26 Full / Nov 1 Third Qtr / Nov 9 New / Nov 17
+    // First Qtr 2026, Norfolk VA) -- all four were off by one phase bucket
+    // until this constant was corrected.
+    const double KNOWN_NEW_MOON_SEC = 947182440.0;
     const double SYNODIC_MONTH_SEC  = 29.530588853 * 86400.0;
 
     double age = fmod((double)t - KNOWN_NEW_MOON_SEC, SYNODIC_MONTH_SEC)
